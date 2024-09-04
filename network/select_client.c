@@ -53,13 +53,13 @@ int main(int argc, char** argv) {
 
         if (FD_ISSET(sockfd, &readfds)) {
             int size = read(sockfd, mesg, BUFSIZ);
+            if (size == 0) break;
             write(1, mesg, size);
         }
 
     } while (strncmp("q", mesg, 1));
 
     close(sockfd);
-
 
     return 0;
 }
