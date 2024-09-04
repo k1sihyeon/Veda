@@ -46,6 +46,9 @@ int main(int argc, char** argv) {
         return -1;
     }
 
+    // 쓰기 소켓 닫음
+    shutdown(ssock, SHUT_WR);
+
     memset(mesg, 0, BUFSIZ);    // mesg 지우기
 
     // 서버 -> 소켓 -> mesg
@@ -53,6 +56,9 @@ int main(int argc, char** argv) {
         perror("recv()");
         return -1;
     }
+
+    // 읽기 소켓 닫음
+    shutdown(ssock, SHUT_RD);
 
     // mesg 출력
     printf("Received data : %s", mesg);
