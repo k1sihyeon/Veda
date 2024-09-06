@@ -60,7 +60,10 @@ int main(int argc, char** argv) {
         close(i);
     }
 
-    // ???????????????
+    // 모든 장치 파일 디스크립터를 닫았으므로
+    // fd0 (/dev/null)에는 0번이 할당됨.
+    // 따라서 fd1, 2도 0번을 통해 연결이 가능함
+
     //  fd 0, 1, 2를 /dev/null로 연결
     fd0 = open("/dev/null", O_RDWR);
     fd1 = dup(0);

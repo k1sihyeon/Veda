@@ -1,6 +1,10 @@
-#include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
+#include <iostream>
+#include <cstdio>
+#include <string>
+#include <cstring>
+#include <thread>
+#include <cstdlib>
+
 #include <fcntl.h>
 #include <unistd.h>
 #include <pthread.h>
@@ -8,14 +12,16 @@
 #include <sys/socket.h>
 #include <netinet/in.h>
 
-static void* clnt_connection(void* arg);
+using namespace std;
+
+static void clnt_connection(void* arg);
 int sendData(FILE* fp, char* ct, char* filename);
 void sendOk(FILE* fp);
 void sendError(FILE* fp);
 
 int main(int argc, char** argv) {
     int ssock;
-    pthread_t thread;
+    thread t;
     struct sockaddr_in servaddr, cliaddr;
     unsigned int len;
 
@@ -58,16 +64,19 @@ int main(int argc, char** argv) {
         inet_ntop(AF_INET, &cliaddr.sin_addr, mesg, BUFSIZ);
         printf("Client IP : %s:%d\n", mesg, ntohs(cliaddr.sin_port));
         
-        pthread_create(&thread, NULL, clnt_connection, &csock);
+        //pthread_create(&thread, NULL, clnt_connection, &csock);
         //pthread_join(thread, NULL); // 연속적 클라이언트 처리
-        pthread_detach(thread);
+        //pthread_detach(thread);
+
+        t = thread(clnt_connection, &csock);
+        t.detach();
     }
 
     return 0;
 }
 
 
-void* clnt_connection(void* arg) {
+void clnt_connection(void* arg) {
     // 스레드 매개변수 arg를 int형 fd로 변환
     int csock = *((int *) arg);
 
@@ -146,9 +155,9 @@ END:;
     fclose(clnt_read);
     fclose(clnt_write);
 
-    pthread_exit(0);
+    //pthread_exit(0);
 
-    return (void *)NULL;
+    return;
 }
 
 int sendData(FILE* fp, char* ct, char* filename) {
