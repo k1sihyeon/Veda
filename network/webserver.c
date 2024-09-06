@@ -57,9 +57,10 @@ int main(int argc, char** argv) {
 
         inet_ntop(AF_INET, &cliaddr.sin_addr, mesg, BUFSIZ);
         printf("Client IP : %s:%d\n", mesg, ntohs(cliaddr.sin_port));
-
+        
         pthread_create(&thread, NULL, clnt_connection, &csock);
         //pthread_join(thread, NULL); // 연속적 클라이언트 처리
+        pthread_detach(thread);
     }
 
     return 0;
@@ -104,21 +105,40 @@ void* clnt_connection(void* arg) {
 
     // 경로가 슬래시로 시작하면 제거
     if (filename[0] == '/') {
-        for (int i = 0, j = 0; i < BUFSIZ; i++, j++) {
-            if (filename[0] == '/') j++;
+        for (int i = 0, j = 0; i < BUFSIZ; i++, j++) {            
             filename[i] = filename[j];
-            if (filename[j] == '\0') break;
+            
+            if (filename[j] == '\0') 
+                break;
         }
     }
 
-    // 메시지 헤더를 읽어서 화면에 출력, 나머지는 무시
-    do {
-        fgets(reg_line, BUFSIZ, clnt_read);
-        fputs(reg_line, stdout);
+    /////////////// Host 확인
+    //
+    char host[BUFSIZ];
+    char hostAddr[BUFSIZ];
 
-        strcpy(reg_buf, reg_line);
-        char* buf = strchr(reg_buf, ':');
-    } while (strncmp(reg_line, "\r\n", 2));
+    fgets(reg_line, BUFSIZ, clnt_read);
+
+    ret = strtok(reg_line, " ");
+    strcpy(host, (ret != NULL) ? ret : "");
+
+    if (strcmp(host, "Host:") == 0) {
+        ret = strtok(NULL, " ");
+        strcpy(hostAddr, (ret != NULL) ? ret : "");
+        printf("%s", hostAddr);
+    }
+    //
+    ////////////////
+
+    // // 메시지 헤더를 읽어서 화면에 출력, 나머지는 무시
+    // do {
+    //     fgets(reg_line, BUFSIZ, clnt_read);
+    //     fputs(reg_line, stdout);
+
+    //     strcpy(reg_buf, reg_line);
+    //     char* buf = strchr(reg_buf, ':');
+    // } while (strncmp(reg_line, "\r\n", 2));
 
     sendData(clnt_write, type, filename);
 
