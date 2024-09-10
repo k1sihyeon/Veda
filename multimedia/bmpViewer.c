@@ -16,12 +16,17 @@
 
 typedef unsigned char ubyte;
 
+unsigned short makepixel(ubyte r, ubyte g, ubyte b) {
+    return (unsigned short)(((r >> 3) << 11) | ((g >> 2) << 5) | (b >> 3));
+}
+
 extern int readBmp(char* filename, ubyte** pData, int* cols, int* rows, int* color);
 
 int main(int argc, char** argv) {
     int cols, rows, color = 24;
     ubyte r, g, b, a = 255;
-    ubyte *pData, *pBmpData, *pFbMap;
+    ubyte *pData; //, *pBmpData, *pFbMap;
+    unsigned short *pBmpData, *pFbMap;
     struct fb_var_screeninfo vinfo;
     int fbfd;
 
@@ -41,9 +46,15 @@ int main(int argc, char** argv) {
         return -1;
     }
 
-    pBmpData = (ubyte *)malloc(vinfo.xres * vinfo.yres * sizeof(ubyte) * vinfo.bits_per_pixel / 8);
+    // pBmpData = (ubyte *)malloc(vinfo.xres * vinfo.yres * sizeof(ubyte) * vinfo.bits_per_pixel / 8);
     pData = (ubyte *)malloc(vinfo.xres * vinfo.yres * sizeof(ubyte) * color / 8);
-    pFbMap = (ubyte *)mmap(0, vinfo.xres * vinfo.yres * vinfo.bits_per_pixel / 8, PROT_READ | PROT_WRITE, MAP_SHARED, fbfd, 0);
+    // pFbMap = (ubyte *)mmap(0, vinfo.xres * vinfo.yres * vinfo.bits_per_pixel / 8, PROT_READ | PROT_WRITE, MAP_SHARED, fbfd, 0);
+    
+    
+    // pBmpData = (unsigned short *)malloc(vinfo.xres * vinfo.yres /* sizeof(unsigned short) */ * vinfo.bits_per_pixel / 8);
+    pBmpData = (unsigned short *)malloc(vinfo.xres * vinfo.yres * sizeof(unsigned short) * vinfo.bits_per_pixel / 16);
+    pFbMap = (unsigned short *)mmap(0, vinfo.xres * vinfo.yres * vinfo.bits_per_pixel / 8, PROT_READ | PROT_WRITE, MAP_SHARED, fbfd, 0);
+
 
     if ((unsigned) pFbMap == (unsigned) -1) {
         perror("mmap()");
@@ -57,17 +68,24 @@ int main(int argc, char** argv) {
 
     for (int y = 0, k, total_y; y < rows; y++) {
         k = (rows - y - 1) * cols * color / 8;
-        total_y = y * vinfo.xres * vinfo.bits_per_pixel / 8;
+        // total_y = y * vinfo.xres * vinfo.bits_per_pixel / 8;
+        total_y = y * vinfo.xres * vinfo.bits_per_pixel / 16;
+        // 16비트면 16으로 나누거나 사용하지 않기
 
         for (int x = 0; x < cols; x++) {
             b = LIMIT_UBYTE(pData[k + x*color/8 + 0]);
             g = LIMIT_UBYTE(pData[k + x*color/8 + 1]);
             r = LIMIT_UBYTE(pData[k + x*color/8 + 2]);
-
-            *(pBmpData + x * vinfo.bits_per_pixel / 8 + total_y + 0) = b;
-            *(pBmpData + x * vinfo.bits_per_pixel / 8 + total_y + 1) = g;
-            *(pBmpData + x * vinfo.bits_per_pixel / 8 + total_y + 2) = r;
-            *(pBmpData + x * vinfo.bits_per_pixel / 8 + total_y + 3) = a;
+            
+            unsigned short px = makepixel(r, g, b);
+            
+            // == *(pBmpData + x + y * vinfo.xres) = px;
+			*(pBmpData + x * vinfo.bits_per_pixel / 16 + total_y) = px;		// == *(pBmpData + x + total_y) = px;
+			
+            // *(pBmpData + x * vinfo.bits_per_pixel / 8 + total_y + 0) = b;
+            // *(pBmpData + x * vinfo.bits_per_pixel / 8 + total_y + 1) = g;
+            // *(pBmpData + x * vinfo.bits_per_pixel / 8 + total_y + 2) = r;
+            // *(pBmpData + x * vinfo.bits_per_pixel / 8 + total_y + 3) = a;
         }
     }
 
