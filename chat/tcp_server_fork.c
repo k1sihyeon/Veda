@@ -5,6 +5,7 @@
 #include <string.h>
 #include <arpa/inet.h>
 #include <sys/socket.h>
+#include <sys/select.h>
 
 #define TCP_PORT    5100
 #define MAX_CLIENT  10
@@ -29,11 +30,15 @@ int main(int argc, char** argv) {
     socklen_t clen;
     struct sockaddr_in servaddr, cliaddr;
 
+    fd_set readFdSet;
+
     int n;
     int port = TCP_PORT;
     int ssock;
 
     char mesg[BUFSIZ];
+
+    //////////////////////////////
 
     if (argc == 2) {
         port = atoi(argv[1]);
@@ -65,11 +70,15 @@ int main(int argc, char** argv) {
 
     clen = sizeof(cliaddr);
 
+    FD_ZERO(&readFdSet);    // fd_set readFdSet를 0으로 초기화
+
     do {
         int n;
-
         char ip[BUFSIZ];
-        int csock = accept(ssock, (struct sockaddr *)&cliaddr, &clen);
+        int csock;
+        
+        clen = sizeof(cliaddr);
+        csock = accept(ssock, (struct sockaddr *)&cliaddr, &clen);
         inet_ntop(AF_INET, &cliaddr.sin_addr, ip, BUFSIZ);
         printf("Client is connected : %s\n", ip);
         CHILD_COUNT += 1;
@@ -95,7 +104,7 @@ int main(int argc, char** argv) {
                 if (write(csock, mesg, n) <= 0)
                     perror("write()");
                 
-                // 다른 client에도 write
+                // 다른 client에도 write -> broadcast
                 // client 접속 정보 (csock, cliaddr등) 저장하기 위한 배열 필요
                 // 공유메모리 등 ipc 사용 필요
 
@@ -103,6 +112,15 @@ int main(int argc, char** argv) {
                 // 파일 전송?
 
             } while (strncmp(mesg, "q", 1));
+        }
+        else if (pid > 0) {     // Parent Proc.
+            close(csock);
+
+            // 클라이언트들이 보내는 메시지 read 대기
+            
+        }
+        else {
+            perror("fork()");
         }
 
         close(csock);
