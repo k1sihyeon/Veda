@@ -41,6 +41,7 @@ static struct fb_var_screeninfo vinfo;
 
 ////////////////////////////////////////////////////////////
 
+// bmp 저장
 void saveImage(unsigned char* inimg) {
 
 	RGBQUAD palrgb[256];
@@ -129,28 +130,30 @@ static void process_image(const void *p) {
 			y1 = in[j + 2];
 			v = in[j + 3] - 128;
 
-			/* YUV를 RGB로 전환 */
+			/* YUV를 RGB로 전환 [y0] */
 			r = clip((298 * y0 + 409 * v + 128) >> 8, 0, 255);
 			g = clip((298 * y0 - 100 * u - 208 * v + 128) >> 8, 0, 255);
 			b = clip((298 * y0 + 516 * u + 128) >> 8, 0, 255);
 			pixel = ((r>>3)<<11)|((g>>2)<<5)|(b>>3);
 
-			/* 16비트 컬러로 전환 */
+			/* 16비트 컬러로 전환 [y0] */
 			fbp[location++] = pixel;
 			
+			// bmp 저장 [y0]
 			inimg[(height-y-1) * width * NUMCOLOR + count++] = b;
 			inimg[(height-y-1) * width * NUMCOLOR + count++] = g;
 			inimg[(height-y-1) * width * NUMCOLOR + count++] = r;
 
-			/* YUV를 RGB로 전환 */
+			/* YUV를 RGB로 전환 [y1] */
 			r = clip((298 * y1 + 409 * v + 128) >> 8, 0, 255);
 			g = clip((298 * y1 - 100 * u - 208 * v + 128) >> 8, 0, 255);
 			b = clip((298 * y1 + 516 * u + 128) >> 8, 0, 255);
 			pixel = ((r>>3)<<11)|((g>>2)<<5)|(b>>3);
 
-			/* 16비트 컬러로 전환 */
+			/* 16비트 컬러로 전환 [y1] */
 			fbp[location++] = pixel;
 			
+			// bmp 저장 [y1]
 			inimg[(height-y-1) * width * NUMCOLOR + count++] = b;
 			inimg[(height-y-1) * width * NUMCOLOR + count++] = g;
 			inimg[(height-y-1) * width * NUMCOLOR + count++] = r;
@@ -191,20 +194,27 @@ static void mainloop(int fd) {
 	while(count--) {
 		for (;;) {
 			fd_set fds;
-			struct timeval tv;
 			FD_ZERO(&fds);
 			FD_SET(fd, &fds);
+			
 			/* Timeout. */
+			struct timeval tv;
 			tv.tv_sec = 2;
 			tv.tv_usec = 0;
+			
+			// 비디오 프레임 데이터가 올때까지 기다림
 			int r = select(fd + 1, &fds, NULL, NULL, &tv);
+			
 			if(-1 == r) {
-				if(EINTR == errno) continue;
+				if(EINTR == errno)
+					continue;
 				mesg_exit("select");
-			} else if(0 == r) {
+			}
+			else if(0 == r) {
 				fprintf(stderr, "select timeout\n");
 				exit(EXIT_FAILURE);
 			}
+			
 			if(read_frame(fd)) break;
 		}
 	}
@@ -220,7 +230,7 @@ static void start_capturing(int fd) {
 		buf.index       = i;
 		
 		if(-1 == xioctl(fd, VIDIOC_QBUF, &buf))
-		            mesg_exit("VIDIOC_QBUF");
+			mesg_exit("VIDIOC_QBUF");
 	}
 
 	enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
@@ -240,9 +250,9 @@ static void init_mmap(int fd) {
 		if(EINVAL == errno) {
 			fprintf(stderr, "%s does not support memory mapping\n", VIDEODEV);
 			exit(EXIT_FAILURE);
-		} else {
-			mesg_exit("VIDIOC_REQBUFS");
 		}
+		else
+			mesg_exit("VIDIOC_REQBUFS");
 	}
 
 	if(req.count < 2) {
@@ -263,13 +273,15 @@ static void init_mmap(int fd) {
 		buf.type        = V4L2_BUF_TYPE_VIDEO_CAPTURE;
 		buf.memory      = V4L2_MEMORY_MMAP;
 		buf.index       = n_buffers;
+		
 		if(-1 == xioctl(fd, VIDIOC_QUERYBUF, &buf))
-		            mesg_exit("VIDIOC_QUERYBUF");
+			mesg_exit("VIDIOC_QUERYBUF");
+		
 		buffers[n_buffers].length = buf.length;
-		buffers[n_buffers].start = mmap(NULL, buf.length, PROT_READ | PROT_WRITE,
-		                                        MAP_SHARED, fd, buf.m.offset);
+		buffers[n_buffers].start = mmap(NULL, buf.length, PROT_READ | PROT_WRITE, MAP_SHARED, fd, buf.m.offset);
+		
 		if(MAP_FAILED == buffers[n_buffers].start)
-		            mesg_exit("mmap");
+			mesg_exit("mmap");
 	}
 }
 
@@ -284,14 +296,13 @@ static void init_device(int fd) {
 		if(EINVAL == errno) {
 			fprintf(stderr, "%s is no V4L2 device\n", VIDEODEV);
 			exit(EXIT_FAILURE);
-		} else {
+		} 
+		else
 			mesg_exit("VIDIOC_QUERYCAP");
-		}
 	}
 
 	if(!(cap.capabilities & V4L2_CAP_VIDEO_CAPTURE)) {
-		fprintf(stderr, "%s is no video capture device\n",
-		                         VIDEODEV);
+		fprintf(stderr, "%s is no video capture device\n", VIDEODEV);
 		exit(EXIT_FAILURE);
 	}
 
@@ -325,12 +336,12 @@ static void init_device(int fd) {
 	min = fmt.fmt.pix.width * 2;
 
 	if(fmt.fmt.pix.bytesperline < min)
-	        fmt.fmt.pix.bytesperline = min;
+		fmt.fmt.pix.bytesperline = min;
 
 	min = fmt.fmt.pix.bytesperline * fmt.fmt.pix.height;
 
 	if(fmt.fmt.pix.sizeimage < min)
-	        fmt.fmt.pix.sizeimage = min;
+		fmt.fmt.pix.sizeimage = min;
 
 	init_mmap(fd);
 }
@@ -371,8 +382,7 @@ int main(int argc, char **argv) {
 	/* 카메라 장치 열기 */
 	camfd = open(VIDEODEV, O_RDWR | O_NONBLOCK, 0);
 	if(-1 == camfd) {
-		fprintf(stderr, "Cannot open '%s': %d, %s\n",
-		                         VIDEODEV, errno, strerror(errno));
+		fprintf(stderr, "Cannot open '%s': %d, %s\n", VIDEODEV, errno, strerror(errno));
 		return EXIT_FAILURE;
 	}
 
@@ -385,18 +395,19 @@ int main(int argc, char **argv) {
 	type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
 
 	if(-1 == xioctl(camfd, VIDIOC_STREAMOFF, &type))
-	        mesg_exit("VIDIOC_STREAMOFF");
+		mesg_exit("VIDIOC_STREAMOFF");
 
 	/* 메모리 정리 */
 	for (int i = 0; i < n_buffers; ++i)
-	        if(-1 == munmap(buffers[i].start, buffers[i].length))
-	            mesg_exit("munmap");
+		if(-1 == munmap(buffers[i].start, buffers[i].length))
+			mesg_exit("munmap");
+	
 	free(buffers);
 	munmap(fbp, screensize);
 
 	/* 장치 닫기 */
 	if(-1 == close(camfd) && -1 == close(fbfd))
-	        mesg_exit("close");
+		mesg_exit("close");
 	
 	return EXIT_SUCCESS;
 }
