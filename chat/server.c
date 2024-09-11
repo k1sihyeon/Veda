@@ -40,32 +40,43 @@ typedef struct message {
 } Message;
 
 void sigchild(int signo) {
-    pid_t pid;
-    int status;
+    printf("Signal from child to remove client: %d\n", signo);
 
-    // 자식 프로세스가 종료되었는지 확인하고, num_clients 감소
-    while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
-        client_count--;  // 클라이언트 수 감소
-        printf("Client disconnected. Active clients: %d\n", client_count);
+    client_count--;
+
+    for (int i = 0; i < MAX_CLIENT; i++) {
+        if (child_pid[i] == signo) {
+            clientSock[i] = 0;
+            break;
+        }
     }
+
+    printf("Client disconnected. Active clients: %d\n", client_count);
 }
 
 // 자식 프로세스에서 호출 - client 수신 시그널
 void siguser1(int signo) {
 
-    printf("Signal from child : %d\n", signo);
+    printf("Signal(SIGUSR1) from child : %d\n", signo);
+
+    // 먼가 여기 오류 있음
+    // sigaction으로 변경?
 
     Message msg;
+    memset(&msg, 0, sizeof(Message));
 
     for (int i = 0; i < MAX_CLIENT; i++) {
         if (read(pipes[i][READ_FD], &msg, sizeof(Message)) > 0) {
             for (int j = 0; j < MAX_CLIENT; j++) {
-                if (clientSock[j] != 0 && i != j) {
+                if (clientSock[j] != 0 /*&& i != j*/) {
                     write(clientSock[j], &msg, sizeof(Message));
+                    usleep(100);
                 }
             }
         }
     }
+
+    printf("siguser1 function done!\n"); //  <- 이거 안 찍힘
 }
 
 void Send(int sockfd, const char *buf, User* user/*, int code*/) {
@@ -116,6 +127,8 @@ int main(int argc, char **argv) {
 
     //////////////////////////////
 
+    memset(clientSock, 0, sizeof(clientSock));
+
     sem = sem_open("login_sem", O_CREAT, 0644, 1);
 
     if (argc == 2) {
@@ -163,19 +176,30 @@ int main(int argc, char **argv) {
         inet_ntop(AF_INET, &cliaddr.sin_addr, ip, BUFSIZ);
         printf("Client is connected : %s\n", ip);
         client_count += 1;
+        
+        // client socket 저장
+        int idx;
+        for (idx = 0; idx < MAX_CLIENT; idx++) {
+            if (clientSock[idx] == 0) {
+                clientSock[idx] = csock;
+                break;
+            }
+        }
 
         // pipe 생성
-        if (pipe(pipes[client_count]) < 0) {
+        if (pipe(pipes[idx]) < 0) {
             perror("pipe()");
             return -1;
         }
 
-        // 연결된 client socket 저장
-        clientSock[client_count] = csock;
+        // // 연결된 client socket 저장
+        // clientSock[client_count] = csock;
+        
+        
 
         if ((pid = fork()) < 0)  ///////////////////////  fork  //////////////////////////////
             perror("fork()");
-        else if (pid == 0) {  // Child Proc. - 클라이언트가 연결될 때 마다
+        else if (pid == 0) {  // Child Proc. - 클라이언트가 연결될 때 마다 
             close(ssock);
             close(pipes[client_count][READ_FD]);
 
@@ -302,11 +326,10 @@ int main(int argc, char **argv) {
             // 최대 접속자 제한?
             // 동시 접속시 -> 세마포어?
 
+
+            char buf[BUFSIZ];
             // 채팅
-
             do {
-                char buf[BUFSIZ];
-
                 memset(buf, 0, BUFSIZ); 
 
                 if ((n = read(csock, buf, BUFSIZ)) <= 0) {
@@ -331,21 +354,22 @@ int main(int argc, char **argv) {
                 // 파일 전송?
                 
                 // free(buf);
-            } while (strncmp(mesg, "q", 1));
-        }
-        else if (pid > 0) {  // Parent Proc.
-            close(csock);
-            close(pipes[client_count][WRITE_FD]);
-            child_pid[client_count] = pid;
-            client_count += 1;
+            } while (strncmp(buf, "q", 1));
 
-            // 클라이언트들이 보내는 메시지 read 대기
+            kill(getppid(), SIGCHLD);
+        }
+        else if (pid > 0) {  //////////////////////  Parent Proc.  ////////////////////////////// 
+            close(csock);
+            close(pipes[idx][WRITE_FD]);
+            //child_pid[client_count] = pid;
+            child_pid[idx] = pid;
+            
         }
         else {
             perror("fork()");
-        }
+        }                   //////////////// fork end //////////////////////
 
-        close(csock);
+        //close(csock);
 
     } while (strncmp(mesg, "q", 1));
 
@@ -353,7 +377,6 @@ CLOSE:;
     sem_close(sem);
     sem_unlink("login_sem");
     close(ssock);
-    
 
     return 0;
 }

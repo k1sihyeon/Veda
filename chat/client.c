@@ -72,7 +72,6 @@ int main(int argc, char** argv) {
     else if (pid == 0) {  // Child Process - 서버로부터 받은 메시지를 출력
         
         char buf[BUFSIZ];
-        //
 
         while (true) {
             Message* msgb = (Message *)malloc(sizeof(Message));
