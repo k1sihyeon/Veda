@@ -101,9 +101,10 @@ int main(int argc, char** argv) {
         while (true) {
             memset(buf, 0, BUFSIZ);  // mesg 지우기
 
+            fflush(stdin);
             // 사용자 메시지 키보드 입력
             fgets(buf, BUFSIZ, stdin);
-
+            
             // 메시지를 소켓으로 변환 후 전송
             if (send(ssock, buf, BUFSIZ, MSG_DONTWAIT) <= 0) {
                 perror("send()");

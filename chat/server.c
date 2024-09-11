@@ -9,11 +9,18 @@
 #include <sys/socket.h>
 #include <sys/time.h>
 #include <unistd.h>
+#include <sys/wait.h>
 
-#define TCP_PORT 5100
-#define MAX_CLIENT 10
+#define TCP_PORT    5100
+#define MAX_CLIENT  10
 
-static int CHILD_COUNT = 0;
+#define READ_FD     0
+#define WRITE_FD    1
+
+static int clientSock[MAX_CLIENT];
+static int pipes[MAX_CLIENT][2];
+static int child_pid[MAX_CLIENT];
+static int client_count = 0;
 
 // client
 // 1. 사용자 지정 이름, 색상 설정
@@ -32,12 +39,33 @@ typedef struct message {
     char mesg[BUFSIZ];
 } Message;
 
-void sigfunc(int no) {
-    printf("Signal from child(%d) : %d\n", CHILD_COUNT, no);
-    CHILD_COUNT -= 1;
+void sigchild(int signo) {
+    pid_t pid;
+    int status;
 
-    if (CHILD_COUNT == 0)
-        exit(0);
+    // 자식 프로세스가 종료되었는지 확인하고, num_clients 감소
+    while ((pid = waitpid(-1, &status, WNOHANG)) > 0) {
+        client_count--;  // 클라이언트 수 감소
+        printf("Client disconnected. Active clients: %d\n", client_count);
+    }
+}
+
+// 자식 프로세스에서 호출 - client 수신 시그널
+void siguser1(int signo) {
+
+    printf("Signal from child : %d\n", signo);
+
+    Message msg;
+
+    for (int i = 0; i < MAX_CLIENT; i++) {
+        if (read(pipes[i][READ_FD], &msg, sizeof(Message)) > 0) {
+            for (int j = 0; j < MAX_CLIENT; j++) {
+                if (clientSock[j] != 0 && i != j) {
+                    write(clientSock[j], &msg, sizeof(Message));
+                }
+            }
+        }
+    }
 }
 
 void Send(int sockfd, const char *buf, User* user/*, int code*/) {
@@ -59,7 +87,8 @@ void Send(int sockfd, const char *buf, User* user/*, int code*/) {
         strcpy(msg->name, user->name);
     }
 
-    size_t n = send(sockfd, msg, sizeof(Message), MSG_DONTWAIT);
+    //size_t n = send(sockfd, msg, sizeof(Message), MSG_DONTWAIT);
+    size_t n = write(sockfd, msg, sizeof(Message));
     usleep(100);
     free(msg);
 
@@ -94,7 +123,9 @@ int main(int argc, char **argv) {
     }
 
     // child proc. signal 처리 설정
-    signal(SIGCHLD, sigfunc);
+    signal(SIGUSR1, siguser1);
+
+    signal(SIGCHLD, sigchild);
 
     // server tcp socket 생성
     if ((ssock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
@@ -131,12 +162,22 @@ int main(int argc, char **argv) {
         csock = accept(ssock, (struct sockaddr *)&cliaddr, &clen);
         inet_ntop(AF_INET, &cliaddr.sin_addr, ip, BUFSIZ);
         printf("Client is connected : %s\n", ip);
-        CHILD_COUNT += 1;
+        client_count += 1;
+
+        // pipe 생성
+        if (pipe(pipes[client_count]) < 0) {
+            perror("pipe()");
+            return -1;
+        }
+
+        // 연결된 client socket 저장
+        clientSock[client_count] = csock;
 
         if ((pid = fork()) < 0)  ///////////////////////  fork  //////////////////////////////
             perror("fork()");
         else if (pid == 0) {  // Child Proc. - 클라이언트가 연결될 때 마다
             close(ssock);
+            close(pipes[client_count][READ_FD]);
 
             // 로그인, 사용자 이름 설정
             while (true) {
@@ -275,11 +316,16 @@ int main(int argc, char **argv) {
 
                 printf("%s[%s]: %s", user.id, user.name, buf);
 
+                // broadcast : pipe에 쓰기
+                Send(pipes[client_count][WRITE_FD], buf, &user);
+                kill(getppid(), SIGUSR1);
+
+                // echo 
                 Send(csock, buf, &user);
 
                 // 다른 client에도 write -> broadcast
                 // client 접속 정보 (csock, cliaddr등) 저장하기 위한 배열 필요
-                // 공유메모리 등 ipc 사용 필요
+                // pipe!
 
                 // !list, 리스트, 귓속말, 강조 등 기능 추가
                 // 파일 전송?
@@ -289,6 +335,9 @@ int main(int argc, char **argv) {
         }
         else if (pid > 0) {  // Parent Proc.
             close(csock);
+            close(pipes[client_count][WRITE_FD]);
+            child_pid[client_count] = pid;
+            client_count += 1;
 
             // 클라이언트들이 보내는 메시지 read 대기
         }
@@ -304,6 +353,7 @@ CLOSE:;
     sem_close(sem);
     sem_unlink("login_sem");
     close(ssock);
+    
 
     return 0;
 }
