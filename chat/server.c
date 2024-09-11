@@ -22,7 +22,6 @@ static int CHILD_COUNT = 0;
 
 typedef struct user {
     char id[BUFSIZ];
-    char pw[BUFSIZ];
     char name[BUFSIZ];
 } User;
 
@@ -41,14 +40,14 @@ void sigfunc(int no) {
         exit(0);
 }
 
-void Send(int sockfd, const void *buf, User* user) {
+void Send(int sockfd, const char *buf, User* user/*, int code*/) {
     Message* msg = (Message*)malloc(sizeof(Message));
     memset(msg, 0, sizeof(Message));
     memset(msg->id, 0, BUFSIZ);
     memset(msg->name, 0, BUFSIZ);
     memset(msg->mesg, 0, BUFSIZ);
 
-    strcpy(msg->mesg, (char*)buf);
+    strcpy(msg->mesg, buf);
     msg->code = 0;
 
     if (user == NULL) {
@@ -69,7 +68,7 @@ void Send(int sockfd, const void *buf, User* user) {
         exit(0);
     }
 
-    printf("Send data : %s", (char*)buf);
+    //printf("Send data : %s", (char*)buf);
 }
 
 int main(int argc, char **argv) {
@@ -144,9 +143,6 @@ int main(int argc, char **argv) {
                 int num;
                 char buf[BUFSIZ];
 
-                printf("after fork\n");
-                fflush(stdout);
-
                 Send(csock, "\033[2J\033[1;1H", NULL);
                 Send(csock, "Welcome to chat server\n", NULL);
                 Send(csock, "=======================\n", NULL);
@@ -161,8 +157,6 @@ int main(int argc, char **argv) {
                 read(csock, buf, BUFSIZ);
                 num = atoi(buf);
 
-                fflush(stdin);
-
                 if (num == 1) {
                     char uid[BUFSIZ];
                     char upw[BUFSIZ];
@@ -174,7 +168,7 @@ int main(int argc, char **argv) {
                     bool isLogin = false;
 
                     Send(csock, "\033[2J\033[1;1H", NULL);
-                    Send(csock, "Input ID >>  ", NULL);
+                    Send(csock, "Input ID >> ", NULL);
                     n = read(csock, uid, BUFSIZ);
                     uid[n] = '\0';
                     strcpy(strtok(uid, "\n"), uid);
@@ -201,7 +195,6 @@ int main(int argc, char **argv) {
                     if (isLogin) {
                         Send(csock, "Login Success !!\n", NULL);
                         strcpy(user.id, uid);
-                        strcpy(user.pw, upw);
                         strcpy(user.name, fname);
                         break;
                     }
@@ -218,9 +211,9 @@ int main(int argc, char **argv) {
                     char uname[BUFSIZ];
 
                     Send(csock, "\033[2J\033[1;1H", NULL);
-                    Send(csock, "Input ID >>  ", NULL);
+                    Send(csock, "Input ID >> ", NULL);
                     n = read(csock, buf, BUFSIZ);
-                    buf[n] = '\0';                 // null 종료
+                    buf[n] = '\0';                   // null 종료
                     strcpy(uid, strtok(buf, "\n"));  // 개행 문자 제거
                     memset(buf, 0, BUFSIZ);
 
@@ -246,7 +239,6 @@ int main(int argc, char **argv) {
                     sem_post(sem);
 
                     strcpy(user.id, uid);
-                    strcpy(user.pw, upw);
                     strcpy(user.name, uname);
 
                     Send(csock, "Register Success !!\n", NULL);
@@ -272,30 +264,18 @@ int main(int argc, char **argv) {
             // 채팅
 
             do {
-                memset(mesg, 0, BUFSIZ);
+                char buf[BUFSIZ];
 
-                if ((n = read(csock, mesg, BUFSIZ)) <= 0)
+                memset(buf, 0, BUFSIZ); 
+
+                if ((n = read(csock, buf, BUFSIZ)) <= 0) {
                     perror("read()");
+                    return -1;
+                }
 
-                mesg[n] = '\0';
+                printf("%s[%s]: %s", user.id, user.name, buf);
 
-                printf("Received data : %s", mesg);
-
-                Message* msg;
-                msg = (Message*)malloc(sizeof(Message));
-                memset(msg, 0, sizeof(Message));
-                memset(msg->id, 0, BUFSIZ);
-                memset(msg->name, 0, BUFSIZ);
-                memset(msg->mesg, 0, BUFSIZ);
-
-                msg->code = 0;
-                strcpy(msg->id, user.id);
-                strcpy(msg->name, user.name);
-                strcpy(msg->mesg, mesg);
-
-                printf("Message created : %s\n", msg->mesg);
-
-                Send(csock, msg, &user);
+                Send(csock, buf, &user);
 
                 // 다른 client에도 write -> broadcast
                 // client 접속 정보 (csock, cliaddr등) 저장하기 위한 배열 필요
@@ -304,7 +284,7 @@ int main(int argc, char **argv) {
                 // !list, 리스트, 귓속말, 강조 등 기능 추가
                 // 파일 전송?
                 
-                free(msg);
+                // free(buf);
             } while (strncmp(mesg, "q", 1));
         }
         else if (pid > 0) {  // Parent Proc.
