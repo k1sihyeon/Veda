@@ -103,7 +103,12 @@ int main(int argc, char** argv) {
             //     printf("%s", msg.buf);
             //     printf("=============================\n");
             // }
-            else if (msg.code == 5) {   // 귓속말
+            else if (msg.code == 5) {   // 사용자 리스트 - 클라이언트 출력용
+                printf("======== client list ========\n");
+                printf("%s", msg.buf);
+                printf("=============================\n");
+            }
+            else if (msg.code == 6) {   // 귓속말
                 printf("%s[%s] whispers to me : %s", msg.name, msg.id, msg.buf);
             }
             else {

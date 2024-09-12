@@ -36,6 +36,7 @@ typedef struct client {
     int sockfd;
     int pipe1[2];
     int pipe2[2];
+    int pipe3[2];
     int child_pid;
     User user;
 } __attribute__((__packed__)) Client;
@@ -121,7 +122,7 @@ int main(int argc, char **argv) {
 
                 clients[i].sockfd = csock;
                 // pipe
-                if (pipe(clients[i].pipe1) < 0 || pipe(clients[i].pipe2) < 0) {
+                if (pipe(clients[i].pipe1) < 0 || pipe(clients[i].pipe2) < 0 || pipe(clients[i].pipe3) < 0) {
                     perror("pipe");
                     exit(1);
                 }
@@ -142,6 +143,8 @@ int main(int argc, char **argv) {
         fcntl(clients[client_idx].pipe1[WRITE_FD], F_SETFL, O_NONBLOCK);
         fcntl(clients[client_idx].pipe2[READ_FD], F_SETFL, O_NONBLOCK);
         fcntl(clients[client_idx].pipe2[WRITE_FD], F_SETFL, O_NONBLOCK);
+        fcntl(clients[client_idx].pipe3[READ_FD], F_SETFL, O_NONBLOCK);
+        fcntl(clients[client_idx].pipe3[WRITE_FD], F_SETFL, O_NONBLOCK);
 
         // fork
         if ((pid = fork()) < 0) {  ///////////////////////////////////////
@@ -221,12 +224,12 @@ int main(int argc, char **argv) {
                         continue;
                     }
 
-                    // if (!strncmp(buf, "!list", 5) || !strncmp(buf, "!users", 6)) {
-                    //     msg = make_message(4, user->id, user->name, "");
-                    //     write(clients[client_idx].pipe1[WRITE_FD], &msg, sizeof(Msg));
-                    //     kill(getppid(), SIGUSR1);
-                    //     continue;
-                    // }
+                    if (!strncmp(buf, "!list", 5) || !strncmp(buf, "!users", 6)) {
+                        msg = make_message(4, user->id, user->name, "");
+                        write(clients[client_idx].pipe1[WRITE_FD], &msg, sizeof(Msg));
+                        kill(getppid(), SIGUSR1);
+                        continue;
+                    }
 
                     // 일반 메시지 처리
                     msg = make_message(1, user->id, user->name, buf);
@@ -271,6 +274,10 @@ void siguser1(int signo) {
     printf("SIGUSER1\n");
 
     Msg msg;
+    Msg list_msg;
+    char buf[BUFSIZ];
+    memset(buf, 0, BUFSIZ);
+
     for (int i = 0; i < MAX_CLIENT; i++) {
         if (clients[i].sockfd != 0) {
             if (read(clients[i].pipe1[READ_FD], &msg, sizeof(Msg)) > 0) {
@@ -282,12 +289,26 @@ void siguser1(int signo) {
                     }
                 }
 
-                // return;
+                return;
             }
 
-
+            if (read(clients[i].pipe3[READ_FD], &list_msg, sizeof(Msg)) > 0) {
+                if (list_msg.code == 4)
+                    strcat(buf, list_msg.buf);
+            }
         }
     }
+
+    if (buf[0] != 0) {
+        list_msg = make_message(5, list_msg.id, list_msg.name, buf);
+        for (int i = 0; i < MAX_CLIENT; i++) {
+            if (clients[i].sockfd != 0) {
+                write(clients[i].pipe2[WRITE_FD], &list_msg, sizeof(Msg));
+                kill(clients[i].child_pid, SIGUSR2);
+            }
+        }
+    }
+
 }
 
 // 자식 프로세스는 파이프로 메시지를 받아 클라이언트(csock)에 전달
@@ -302,24 +323,34 @@ void siguser2(int signo) {
         if (clients[i].child_pid == getpid()) {
             if (read(clients[i].pipe2[READ_FD], &msg, sizeof(Msg)) > 0) {
 
-                // if (msg.code == 4) {
-                //     //char buf[BUFSIZ];
-                //     sprintf(msg.buf, "%s [%s]\n", clients[i].user.name, clients[i].user.id);
-                //     //strcat(msg.buf, buf);
-                //     write(clients[i].pipe3[WRITE_FD], &msg, sizeof(Msg));
-                //     kill(getppid(), SIGUSR1);
-                //     break;
-                // }
+                if (msg.code == 4) {
+                    //char buf[BUFSIZ];
+                    sprintf(msg.buf, "%s [%s]\n", clients[i].user.name, clients[i].user.id);
+                    printf("list: %s", msg.buf);
+                    //strcat(msg.buf, buf);
+                    write(clients[i].pipe3[WRITE_FD], &msg, sizeof(Msg));
+                    kill(getppid(), SIGUSR1);
+                    break;
+                }
                 // list 브로드 캐스팅 받으면 클라이언트에서 각각 name, id 보내고
                 // 서버에서는 그걸 받아서 리스트 만들어서 보내주기,, 하고 싶은데 
                 // 그럴러면 pipe 하나 더 or 사용자 정의 시그널 하나 더 필요할 듯
+
+                if (msg.code == 5) {
+                    if (strcmp(msg.id, clients[i].user.id) == 0) {
+                        write(clients[i].sockfd, &msg, sizeof(Msg));
+                        // 다른 클라이언트에서도 보임,,
+                        // 왜지.. 감자..
+                        break;
+                    }
+                }
 
                 write(clients[i].sockfd, &msg, sizeof(Msg));
                 break;
             }
             //break;
 
-            
+
         }
     }
 }
@@ -327,10 +358,14 @@ void siguser2(int signo) {
 // 클라이언트 연결 종료 시
 void close_client(int idx) {
     close(clients[idx].sockfd);
+
     close(clients[idx].pipe1[READ_FD]);
     close(clients[idx].pipe1[WRITE_FD]);
     close(clients[idx].pipe2[READ_FD]);
     close(clients[idx].pipe2[WRITE_FD]);
+    close(clients[idx].pipe3[READ_FD]);
+    close(clients[idx].pipe3[WRITE_FD]);
+
     clients[idx].sockfd = 0;
     clients[idx].child_pid = 0;
 }
