@@ -20,7 +20,7 @@ typedef struct message {
 } __attribute__((__packed__)) Msg;
 
 void sigfunc(int no) {
-    printf("Signal from child : %d\n", no);
+    //printf("Signal from child : %d\n", no);
     exit(0);
 }
 
@@ -82,9 +82,30 @@ int main(int argc, char** argv) {
                 return -1;
             }
 
-            // mesg 출력
-            printf("%s[%s]: %s", msg.name, msg.id, msg.buf);
+            if (msg.code == -1) {   // 서버 종료
+                printf("=====  Disconnected from server  =====\n");
+                break;
+            }
+            else if (msg.code == 0) {    // 서버가 직접 보낸 메시지
+                printf("%s", msg.buf);
+            }
+            else if (msg.code == 1) {   // 다른 클라이언트가 보낸 메시지
+                printf("%s[%s]: %s", msg.name, msg.id, msg.buf);
+            }
+            else if (msg.code == 2) {   // 채팅방 입장
+                printf("%s[%s] entered the chat room\n", msg.name, msg.id);
+            }
+            else if (msg.code == 3) {   // 채팅방 퇴장
+                printf("%s[%s] left the chat room\n", msg.name, msg.id);
+            }
+            else {
+                printf("Unknown code\n");
+            }
             fflush(stdout);
+
+            // // mesg 출력
+            // printf("%s[%s]: %s", msg.name, msg.id, msg.buf);
+            // fflush(stdout);
         }
     }
     else if (pid > 0) {  // Parent Process - 사용자가 입력한 메시지를 서버로 전송

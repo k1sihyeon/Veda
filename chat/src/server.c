@@ -40,7 +40,7 @@ typedef struct user {
 
 ////    전역 변수    ////
 
-Client clients[MAX_CLIENT];
+Client clients[MAX_CLIENT];     // 사용 시 visibility 주의
 
 ////   함수 선언    ////
 void siguser1(int signo);
@@ -50,7 +50,7 @@ void close_client(int idx);
 
 Msg make_message(const int code, const char *id, const char *name, const char *buf);
 
-int SendFromServer(int sockfd, const char *buf);
+int ServerSend(int sockfd, const char *buf);
 
 int HelloWorld(int sockfd, sem_t *sem, User *user);
 bool Login(int sockfd, sem_t *sem, User *user);
@@ -175,14 +175,43 @@ int main(int argc, char **argv) {
                 goto CLOSE;
             }
 
-            // read socket & write pipe
+            // -> 로그인 성공 이후
+            // 클라이언트가 로그인 하기 전에도 입장 메시지가 나옴
+            // 수정 필요
+
+            // 채팅방 입장 메시지 전송
             Msg msg;
+            msg = make_message(2, user->id, user->name, "");
+            write(clients[client_idx].pipe1[WRITE_FD], &msg, sizeof(Msg));
+            kill(getppid(), SIGUSR1);
+
+            ServerSend(csock, "\033[2J\033[1;1H");
+            ServerSend(csock, "===============================\n");
+            ServerSend(csock, "     Welcome to chat server    \n");
+            ServerSend(csock, "===============================\n");
+            ServerSend(csock, "     Type '!exit' to exit      \n");
+            ServerSend(csock, "===============================\n\n");
+
+            // read socket & write pipe
             while (true) {
                 char buf[BUFSIZ];
 
                 if (read(clients[client_idx].sockfd, buf, sizeof(buf)) > 0) {
                     printf("child: %s\n", buf);
-                    msg = make_message(0, user->id, user->name, buf);
+
+                    if (!strncmp(buf, "!exit", 5)) {
+                        // 퇴장 메시지 전송
+                        msg = make_message(3, user->id, user->name, "");
+                        write(clients[client_idx].pipe1[WRITE_FD], &msg, sizeof(Msg));
+                        kill(getppid(), SIGUSR1);
+
+                        msg = make_message(-1, "", "", "");
+                        write(clients[client_idx].sockfd, &msg, sizeof(Msg));
+                        break;
+                    }
+
+                    // 일반 메시지 처리
+                    msg = make_message(1, user->id, user->name, buf);
                     write(clients[client_idx].pipe1[WRITE_FD], &msg, sizeof(Msg));
                     kill(getppid(), SIGUSR1);
                 }
@@ -201,7 +230,18 @@ int main(int argc, char **argv) {
     }
 
 CLOSE:;
+    Msg msg = make_message(-1, "", "", "");
+    for (int i = 0; i < MAX_CLIENT; i++) {
+        if (clients[i].sockfd != 0) {
+            write(clients[i].pipe1[WRITE_FD], &msg, sizeof(Msg));
+            kill(clients[i].child_pid, SIGUSR2);
+            close_client(i);
+        }
+    }
     close(ssock);
+    sem_close(sem);
+    sem_unlink("login");
+
 
     return 0;
 }
@@ -406,6 +446,7 @@ bool Resgister(int sockfd, sem_t *sem, User *user) {
     strcpy(user->name, name);
 
     ServerSend(sockfd, "Register success\n");
+    sleep(1);
 
     return true;
 }
