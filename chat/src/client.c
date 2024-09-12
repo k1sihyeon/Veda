@@ -30,6 +30,7 @@ typedef struct message {
     char name[50];
     int  group;
     char buf[BUFSIZ];
+    char destID[20];
     char filename[100];
     int  filesize;
 } __attribute__((__packed__)) Msg;
@@ -136,7 +137,7 @@ int main(int argc, char** argv) {
                 }
             }
             else if (msg.code == WHISPER_MSG_CODE) {   // 귓속말
-                //if (strcmp(msg.id, user.id) == 0)
+                if (strcmp(msg.destID, user.id) == 0)
                     printf("%s[%s] whispers to me : %s", msg.name, msg.id, msg.buf);
             }
             else if (msg.code == USER_INFO_CODE) {   // user 설정 코드

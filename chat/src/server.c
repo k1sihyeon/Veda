@@ -37,6 +37,7 @@ typedef struct message {
     char name[50];
     int  group;
     char buf[BUFSIZ];
+    char destID[20];
     char filename[100];
     int  filesize;
 } __attribute__((__packed__)) Msg;
@@ -232,10 +233,11 @@ int main(int argc, char **argv) {
                         ServerSend(csock, " '!exit', '!quit', '!q'      : close connection and exit \n");
                         ServerSend(csock, " '!list', '!users'           : show user list \n");
                         ServerSend(csock, " '!group [number]'           : change group \n");
-                        ServerSend(csock, " '!send [filename]           : send file to server\n");
-                        ServerSend(csock, " '!recv [filename]           : receive file from server\n");
                         ServerSend(csock, " '!whisper [id] [message]'   : whisper to user \n");
                         ServerSend(csock, " '@ [id] [message]'          : whisper to user \n");
+                        ServerSend(csock, " '!send [filename]           : send file to server\n");
+                        ServerSend(csock, " '!recv [filename]           : receive file from server\n");
+                        ServerSend(csock, " '!clear', '!cls'            : clear screen \n");
                         ServerSend(csock, "----------------------------------------------------------\n");
 
                         continue;
@@ -306,8 +308,10 @@ int main(int argc, char **argv) {
                         }
 
                         msg = make_message(WHISPER_MSG_CODE, user->id, user->name, user->group, message);
-                        // write(clients[client_idx].pipe1[WRITE_FD], &msg, sizeof(Msg));
-                        // kill(getppid(), SIGUSR1);
+                        strcpy(msg.destID, id);
+                        write(clients[client_idx].pipe1[WRITE_FD], &msg, sizeof(Msg));
+                        kill(getppid(), SIGUSR1);
+                        
                         continue;
                     }
 
@@ -400,6 +404,11 @@ int main(int argc, char **argv) {
 
                         fclose(file);
 
+                        continue;
+                    }
+
+                    if (!strncmp(buf, "!clear", 6) || !strncmp(buf, "!cls", 4)) {
+                        ServerSend(csock, "\033[2J\033[1;1H");
                         continue;
                     }
 
