@@ -83,7 +83,7 @@ int main(int argc, char** argv) {
             }
 
             // mesg 출력
-            printf("%s[%s]: %s", msg.id, msg.name, msg.buf);
+            printf("%s[%s]: %s", msg.name, msg.id, msg.buf);
             fflush(stdout);
         }
     }

@@ -2,3 +2,8 @@
 /.vscode
 /*.exe
 *.exe
+*.o
+*.out
+/chat/bin
+/chat/data
+/tmp

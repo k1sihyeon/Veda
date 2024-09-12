@@ -1,0 +1,14 @@
+[Unit]
+Description=Chat Server
+
+[Service]
+Type=simple
+User=sihyeon
+ExecStart=/home/sihyeon/workspace/veda/chat/server
+TimeoutSec=0
+StandardOutput=tty
+RemainAfterExit=yes
+WorkingDirectory=/home/sihyeon/workspace/veda/chat
+
+[Install]
+WantedBy=multi-user.target

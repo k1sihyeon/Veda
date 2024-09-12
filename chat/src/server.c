@@ -17,6 +17,8 @@
 #define READ_FD 0
 #define WRITE_FD 1
 
+#define LOGIN_FILE_DIR "/home/sihyeon/workspace/veda/chat/data/login.csv"
+
 typedef struct message {
     int code;
     char id[20];
@@ -86,7 +88,7 @@ int main(int argc, char **argv) {
         exit(1);
     }
 
-    if (listen(ssock, 5) < 0) {
+    if (listen(ssock, MAX_CLIENT) < 0) {
         perror("listen");
         exit(1);
     }
@@ -336,7 +338,7 @@ bool Login(int sockfd, sem_t *sem, User *user) {
 
     // csv로 로그인 유효성 검사
     sem_wait(sem);
-    csv_fp = fopen("login.csv", "r");
+    csv_fp = fopen(LOGIN_FILE_DIR, "r");
     while (fgets(buf, BUFSIZ, csv_fp) != NULL) {
         sscanf(buf, "%[^,], %[^,], %s", fid, fpw, fname);
 
@@ -394,7 +396,7 @@ bool Resgister(int sockfd, sem_t *sem, User *user) {
     // file semaphore
     sem_wait(sem);
 
-    csv_fp = fopen("login.csv", "a");
+    csv_fp = fopen(LOGIN_FILE_DIR, "a");
     fprintf(csv_fp, "%s, %s, %s\n", id, pw, name);
     fclose(csv_fp);
 
