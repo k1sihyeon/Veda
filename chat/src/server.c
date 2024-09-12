@@ -20,23 +20,25 @@
 #define LOGIN_FILE_DIR "/home/sihyeon/workspace/veda/chat/data/login.csv"
 
 typedef struct message {
-    int code;
+    int  code;
     char id[20];
     char name[50];
     char buf[BUFSIZ];
 } __attribute__((__packed__)) Msg;
+
+typedef struct user {
+    char id[20];
+    char name[50];
+    int  group;
+} __attribute__((__packed__)) User;
 
 typedef struct client {
     int sockfd;
     int pipe1[2];
     int pipe2[2];
     int child_pid;
+    User user;
 } __attribute__((__packed__)) Client;
-
-typedef struct user {
-    char id[20];
-    char name[50];
-} __attribute__((__packed__)) User;
 
 ////    전역 변수    ////
 
@@ -55,6 +57,7 @@ int ServerSend(int sockfd, const char *buf);
 int HelloWorld(int sockfd, sem_t *sem, User *user);
 bool Login(int sockfd, sem_t *sem, User *user);
 bool Resgister(int sockfd, sem_t *sem, User *user);
+void EnterChatRoom(int sockfd);
 
 ////    main 함수    ////
 
@@ -175,6 +178,10 @@ int main(int argc, char **argv) {
                 goto CLOSE;
             }
 
+            strcpy(clients[client_idx].user.id, user->id);
+            strcpy(clients[client_idx].user.name, user->name);
+            // clients[client_idx].user.group = user->group;
+
             // -> 로그인 성공 이후
             // 클라이언트가 로그인 하기 전에도 입장 메시지가 나옴
             // 수정 필요
@@ -185,12 +192,7 @@ int main(int argc, char **argv) {
             write(clients[client_idx].pipe1[WRITE_FD], &msg, sizeof(Msg));
             kill(getppid(), SIGUSR1);
 
-            ServerSend(csock, "\033[2J\033[1;1H");
-            ServerSend(csock, "===============================\n");
-            ServerSend(csock, "     Welcome to chat server    \n");
-            ServerSend(csock, "===============================\n");
-            ServerSend(csock, "     Type '!exit' to exit      \n");
-            ServerSend(csock, "===============================\n\n");
+            EnterChatRoom(csock);
 
             // read socket & write pipe
             while (true) {
@@ -199,16 +201,32 @@ int main(int argc, char **argv) {
                 if (read(clients[client_idx].sockfd, buf, sizeof(buf)) > 0) {
                     printf("child: %s\n", buf);
 
-                    if (!strncmp(buf, "!exit", 5)) {
+                    if (!strncmp(buf, "!exit", 5) || !strncmp(buf, "!quit", 5) || !strncmp(buf, "!q", 2)) {
                         // 퇴장 메시지 전송
                         msg = make_message(3, user->id, user->name, "");
                         write(clients[client_idx].pipe1[WRITE_FD], &msg, sizeof(Msg));
                         kill(getppid(), SIGUSR1);
 
+                        // 종료 메시지 전송
                         msg = make_message(-1, "", "", "");
                         write(clients[client_idx].sockfd, &msg, sizeof(Msg));
                         break;
                     }
+
+                    if (!strncmp(buf, "!help", 5)) {
+                        ServerSend(csock, "=======================================\n");
+                        ServerSend(csock, "         .        \n");
+                        ServerSend(csock, "=======================================\n");
+
+                        continue;
+                    }
+
+                    // if (!strncmp(buf, "!list", 5) || !strncmp(buf, "!users", 6)) {
+                    //     msg = make_message(4, user->id, user->name, "");
+                    //     write(clients[client_idx].pipe1[WRITE_FD], &msg, sizeof(Msg));
+                    //     kill(getppid(), SIGUSR1);
+                    //     continue;
+                    // }
 
                     // 일반 메시지 처리
                     msg = make_message(1, user->id, user->name, buf);
@@ -248,7 +266,7 @@ CLOSE:;
 
 ////  함수 정의    ////
 
-// 부모 프로세스에서 파이프로 메시지를 받아 다른 자식 프로세스(sigusr2)에게 전달
+// 부모 프로세스는 파이프로 메시지를 받아 다른 자식 프로세스(sigusr2)에게 전달
 void siguser1(int signo) {
     printf("SIGUSER1\n");
 
@@ -256,18 +274,23 @@ void siguser1(int signo) {
     for (int i = 0; i < MAX_CLIENT; i++) {
         if (clients[i].sockfd != 0) {
             if (read(clients[i].pipe1[READ_FD], &msg, sizeof(Msg)) > 0) {
+                // broadcast
                 for (int j = 0; j < MAX_CLIENT; j++) {
                     if (clients[j].sockfd != 0) {
                         write(clients[j].pipe2[WRITE_FD], &msg, sizeof(Msg));
                         kill(clients[j].child_pid, SIGUSR2);
                     }
                 }
+
+                // return;
             }
+
+
         }
     }
 }
 
-// 자식 프로세스에서 파이프로 메시지를 받아 클라이언트(csock)에 전달
+// 자식 프로세스는 파이프로 메시지를 받아 클라이언트(csock)에 전달
 void siguser2(int signo) {
     printf("SIGUSER2\n");
 
@@ -278,9 +301,25 @@ void siguser2(int signo) {
     for (int i = 0; i < MAX_CLIENT; i++) {
         if (clients[i].child_pid == getpid()) {
             if (read(clients[i].pipe2[READ_FD], &msg, sizeof(Msg)) > 0) {
+
+                // if (msg.code == 4) {
+                //     //char buf[BUFSIZ];
+                //     sprintf(msg.buf, "%s [%s]\n", clients[i].user.name, clients[i].user.id);
+                //     //strcat(msg.buf, buf);
+                //     write(clients[i].pipe3[WRITE_FD], &msg, sizeof(Msg));
+                //     kill(getppid(), SIGUSR1);
+                //     break;
+                // }
+                // list 브로드 캐스팅 받으면 클라이언트에서 각각 name, id 보내고
+                // 서버에서는 그걸 받아서 리스트 만들어서 보내주기,, 하고 싶은데 
+                // 그럴러면 pipe 하나 더 or 사용자 정의 시그널 하나 더 필요할 듯
+
                 write(clients[i].sockfd, &msg, sizeof(Msg));
+                break;
             }
-            break;
+            //break;
+
+            
         }
     }
 }
@@ -323,15 +362,15 @@ int HelloWorld(int sockfd, sem_t *sem, User *user) {
     char buf[BUFSIZ];
 
     ServerSend(sockfd, "\033[2J\033[1;1H");
-    ServerSend(sockfd, "Welcome to chat server\n");
-    ServerSend(sockfd, "=======================\n");
-    ServerSend(sockfd, "===== Select Menu =====\n");
-    ServerSend(sockfd, "=======================\n");
+    ServerSend(sockfd, "         Welcome to chat server        \n");
+    ServerSend(sockfd, "=======================================\n");
+    ServerSend(sockfd, "              Select Menu              \n");
+    ServerSend(sockfd, "=======================================\n");
     ServerSend(sockfd, "1. Login\n");
     ServerSend(sockfd, "2. Register\n");
     ServerSend(sockfd, "3. Exit\n");
-    ServerSend(sockfd, "=======================\n");
-    ServerSend(sockfd, "Input >> ");
+    ServerSend(sockfd, "=======================================\n");
+    ServerSend(sockfd, "Input Number >> ");
 
     read(sockfd, buf, sizeof(buf));
     num = atoi(buf);
@@ -349,6 +388,7 @@ int HelloWorld(int sockfd, sem_t *sem, User *user) {
     }
     else {
         ServerSend(sockfd, "Invalid input\n");
+        sleep(1);
         return false;
     }
 
@@ -449,4 +489,14 @@ bool Resgister(int sockfd, sem_t *sem, User *user) {
     sleep(1);
 
     return true;
+}
+
+void EnterChatRoom(int sockfd) {
+    ServerSend(sockfd, "\033[2J\033[1;1H");
+    ServerSend(sockfd, "=======================================\n");
+    ServerSend(sockfd, "         Welcome to chat server        \n");
+    ServerSend(sockfd, "=======================================\n");
+    ServerSend(sockfd, "         Type '!exit' to exit          \n");
+    ServerSend(sockfd, "   Type '!help' to get more commands   \n");
+    ServerSend(sockfd, "=======================================\n\n");
 }

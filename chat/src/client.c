@@ -98,14 +98,18 @@ int main(int argc, char** argv) {
             else if (msg.code == 3) {   // 채팅방 퇴장
                 printf("%s[%s] left the chat room\n", msg.name, msg.id);
             }
+            // else if (msg.code == 4) {   // 사용자 리스트 - 서버 내부 처리용
+            //     printf("======== client list ========\n");
+            //     printf("%s", msg.buf);
+            //     printf("=============================\n");
+            // }
+            else if (msg.code == 5) {   // 귓속말
+                printf("%s[%s] whispers to me : %s", msg.name, msg.id, msg.buf);
+            }
             else {
                 printf("Unknown code\n");
             }
             fflush(stdout);
-
-            // // mesg 출력
-            // printf("%s[%s]: %s", msg.name, msg.id, msg.buf);
-            // fflush(stdout);
         }
     }
     else if (pid > 0) {  // Parent Process - 사용자가 입력한 메시지를 서버로 전송
@@ -121,7 +125,7 @@ int main(int argc, char** argv) {
             // 입력한 문자열 화면에서 지우기
             printf("\033[1A\033[2K");
             
-            // 메시지를 소켓으로 변환 후 전송
+            // 메시지를 소켓으로 전송
             if (send(ssock, buf, BUFSIZ, MSG_DONTWAIT) <= 0) {
                 perror("send()");
                 return -1;
