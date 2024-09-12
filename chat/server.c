@@ -21,6 +21,7 @@ static int clientSock[MAX_CLIENT];
 static int pipes[MAX_CLIENT][2];
 static int child_pid[MAX_CLIENT];
 static int client_count = 0;
+static int my_idx = 0;
 
 // client
 // 1. 사용자 지정 이름, 색상 설정
@@ -30,14 +31,23 @@ static int client_count = 0;
 typedef struct user {
     char id[BUFSIZ];
     char name[BUFSIZ];
-} User;
+} __attribute__((__packed__)) User;
 
 typedef struct message {
     int code;
     char id[BUFSIZ];
     char name[BUFSIZ];
     char mesg[BUFSIZ];
-} Message;
+} __attribute__((__packed__)) Message;
+
+typedef struct pipem {
+    Message msg;
+    int idx;
+    int pid;
+    int code;   // 0: from child to parent, 1: from parent to child
+} __attribute__((__packed__)) PipeM;
+
+// 파이프로 통신 시에 PipeM으로 변환!!!!!!!!!!!!!!!!!!!!!!!!!
 
 void sigchild(int signo) {
     printf("Signal from child to remove client: %d\n", signo);
@@ -54,29 +64,75 @@ void sigchild(int signo) {
     printf("Client disconnected. Active clients: %d\n", client_count);
 }
 
-// 자식 프로세스에서 호출 - client 수신 시그널
+// 자식 프로세스에서 호출 -> 부모 프로세스에서 실행 - client 수신 시그널
 void siguser1(int signo) {
 
     printf("Signal(SIGUSR1) from child : %d\n", signo);
+    fflush(stdout);
 
-    // 먼가 여기 오류 있음
-    // sigaction으로 변경?
+    PipeM *pm = (PipeM *)malloc(sizeof(PipeM));
+    memset(pm, 0, sizeof(PipeM));
 
-    Message msg;
-    memset(&msg, 0, sizeof(Message));
-
+    // broadcast
     for (int i = 0; i < MAX_CLIENT; i++) {
-        if (read(pipes[i][READ_FD], &msg, sizeof(Message)) > 0) {
-            for (int j = 0; j < MAX_CLIENT; j++) {
-                if (clientSock[j] != 0 /*&& i != j*/) {
-                    write(clientSock[j], &msg, sizeof(Message));
-                    usleep(100);
+        if (child_pid[i] < 0)
+            continue;
+        
+        if (read(pipes[i][READ_FD], pm, sizeof(PipeM)) > 0) {
+            if (pm->code == 0) {
+                for (int j = 0; j < MAX_CLIENT; j++) {
+                    printf("[SIGUSR1] from pipe(%d) to pipe(%d), getpid(%d) : %s\n", i, j, getpid(), pm->msg.mesg);
+
+                    pm->code = 1;
+                    write(pipes[j][WRITE_FD], pm, sizeof(PipeM));
+                    kill(child_pid[j], SIGUSR2);
                 }
+            }
+            else if (pm->code == 1) {   
+                write(pipes[i][WRITE_FD], pm, sizeof(PipeM));
+                //kill(child_pid[i], SIGUSR2);
             }
         }
     }
 
-    printf("siguser1 function done!\n"); //  <- 이거 안 찍힘
+    return;
+}
+
+// 부모 프로세스에서 호출 -> 자식 프로세스에서 실행 - client socket으로 전송 시그널
+void siguser2(int signo) {
+    printf("Signal(SIGUSR2) from parent(SIGUSR1) : %d\n", signo);
+    fflush(stdout);
+
+    if (my_idx < 0) {
+        printf("[SIGUSR2] idx(%d) not found\n", my_idx);
+        return;
+    }
+
+    PipeM *pm = (PipeM *)malloc(sizeof(PipeM));
+    memset(pm, 0, sizeof(PipeM));
+
+    for (int i = 0; i < MAX_CLIENT; i++) {
+        if (read(pipes[i][READ_FD], pm, sizeof(PipeM)) > 0) {
+            if ((pm->code == 1)) {
+                printf("[SIGUSR2] from pipe(%d) to csock(%d), getpid(%d) : %s\n", i, clientSock[i], getpid(), pm->msg.mesg);
+                if (write(clientSock[i], &(pm->msg), sizeof(Message)) < 0) {
+                    perror("[sigusr2] write() to client");
+                    exit(0);
+                }
+            }
+            else if (pm->code == 0) {
+                write(pipes[i][WRITE_FD], pm, sizeof(PipeM));
+                //kill(getppid() SIGUSR1);
+            }
+            else {
+                printf("[SIGUSR2] pipe(%d): invalid code(%d)\n", i, pm->code);
+            }
+        }
+    }
+
+    free(pm);
+
+    return;
 }
 
 void Send(int sockfd, const char *buf, User* user/*, int code*/) {
@@ -107,8 +163,6 @@ void Send(int sockfd, const char *buf, User* user/*, int code*/) {
         perror("Send()");
         exit(0);
     }
-
-    //printf("Send data : %s", (char*)buf);
 }
 
 int main(int argc, char **argv) {
@@ -119,7 +173,6 @@ int main(int argc, char **argv) {
     FILE *csv_fp;
     sem_t *sem;
 
-    int n;
     int port = TCP_PORT;
     int ssock;
 
@@ -134,11 +187,6 @@ int main(int argc, char **argv) {
     if (argc == 2) {
         port = atoi(argv[1]);
     }
-
-    // child proc. signal 처리 설정
-    signal(SIGUSR1, siguser1);
-
-    signal(SIGCHLD, sigchild);
 
     // server tcp socket 생성
     if ((ssock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
@@ -192,16 +240,23 @@ int main(int argc, char **argv) {
             return -1;
         }
 
-        // // 연결된 client socket 저장
-        // clientSock[client_count] = csock;
-        
+        // pipe non-blocking 설정 - 일단 에러 처리 안함
+        int flags = fcntl(pipes[idx][READ_FD], F_GETFL, 0);
+        flags |= O_NONBLOCK;
+        fcntl(pipes[idx][READ_FD], F_SETFL, flags);
+
+        flags = fcntl(pipes[idx][WRITE_FD], F_GETFL, 0);
+        flags |= O_NONBLOCK;
+        fcntl(pipes[idx][WRITE_FD], F_SETFL, flags);
         
 
         if ((pid = fork()) < 0)  ///////////////////////  fork  //////////////////////////////
             perror("fork()");
         else if (pid == 0) {  // Child Proc. - 클라이언트가 연결될 때 마다 
             close(ssock);
-            close(pipes[client_count][READ_FD]);
+            //close(pipes[idx][READ_FD]);
+
+            signal(SIGUSR2, siguser2);
 
             // 로그인, 사용자 이름 설정
             while (true) {
@@ -269,7 +324,8 @@ int main(int argc, char **argv) {
                     }
                 }
                 else if (num == 2) {
-                    char buf[BUFSIZ];
+                    //char buf[BUFSIZ];
+                    memset(buf, 0, BUFSIZ);
 
                     char uid[BUFSIZ];
                     char upw[BUFSIZ];
@@ -316,7 +372,6 @@ int main(int argc, char **argv) {
                 else {
                     Send(csock, "\033[2J\033[1;1H", NULL);
                     Send(csock, "Invalid input !!\n", NULL);
-                    getchar();
                     continue;
                 }
             }
@@ -324,7 +379,6 @@ int main(int argc, char **argv) {
             ///// todo: 채팅 그룹 설정
 
             // 최대 접속자 제한?
-            // 동시 접속시 -> 세마포어?
 
 
             char buf[BUFSIZ];
@@ -340,15 +394,34 @@ int main(int argc, char **argv) {
                 printf("%s[%s]: %s", user.id, user.name, buf);
 
                 // broadcast : pipe에 쓰기
-                Send(pipes[client_count][WRITE_FD], buf, &user);
+                Message *msg = (Message *)malloc(sizeof(Message));
+                memset(msg, 0, sizeof(Message));
+                msg->code = 0;
+                strcpy(msg->id, user.id);
+                strcpy(msg->name, user.name);
+                strcpy(msg->mesg, buf);
+
+                PipeM *pm = (PipeM *)malloc(sizeof(PipeM));
+                memset(pm, 0, sizeof(PipeM));
+                strcpy(pm->msg.id, msg->id);
+                strcpy(pm->msg.name, msg->name);
+                strcpy(pm->msg.mesg, msg->mesg);
+                pm->msg.code = msg->code;
+                pm->idx = idx;
+                pm->pid = getpid();
+                pm->code = 0;
+
+                my_idx = idx;
+                write(pipes[idx][WRITE_FD], pm, sizeof(PipeM));
                 kill(getppid(), SIGUSR1);
 
                 // echo 
                 Send(csock, buf, &user);
 
+                fflush(stdout);
+
                 // 다른 client에도 write -> broadcast
                 // client 접속 정보 (csock, cliaddr등) 저장하기 위한 배열 필요
-                // pipe!
 
                 // !list, 리스트, 귓속말, 강조 등 기능 추가
                 // 파일 전송?
@@ -359,11 +432,14 @@ int main(int argc, char **argv) {
             kill(getppid(), SIGCHLD);
         }
         else if (pid > 0) {  //////////////////////  Parent Proc.  ////////////////////////////// 
-            close(csock);
-            close(pipes[idx][WRITE_FD]);
-            //child_pid[client_count] = pid;
+            //close(csock);
+
+            // child proc. signal 처리 설정
+            signal(SIGUSR1, siguser1);
+            signal(SIGCHLD, sigchild);
+
+            // close(pipes[idx][WRITE_FD]);
             child_pid[idx] = pid;
-            
         }
         else {
             perror("fork()");
