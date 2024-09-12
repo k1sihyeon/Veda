@@ -167,6 +167,7 @@ int main(int argc, char **argv) {
                     break;
                 }
             }
+
             if (user->id[0] == 0) {
                 close_client(client_idx);
                 goto CLOSE;
@@ -179,7 +180,7 @@ int main(int argc, char **argv) {
 
                 if (read(clients[client_idx].sockfd, buf, sizeof(buf)) > 0) {
                     printf("child: %s\n", buf);
-                    msg = make_message(0, "id", "name", buf);
+                    msg = make_message(0, user->id, user->name, buf);
                     write(clients[client_idx].pipe1[WRITE_FD], &msg, sizeof(Msg));
                     kill(getppid(), SIGUSR1);
                 }
@@ -336,12 +337,15 @@ bool Login(int sockfd, sem_t *sem, User *user) {
     // csv로 로그인 유효성 검사
     sem_wait(sem);
     csv_fp = fopen("login.csv", "r");
-    while (fscanf(csv_fp, "%s, %s, %s\n", fid, fpw, fname) != EOF) {
+    while (fgets(buf, BUFSIZ, csv_fp) != NULL) {
+        sscanf(buf, "%[^,], %[^,], %s", fid, fpw, fname);
+
         if (!strcmp(uid, fid) && !strcmp(upw, fpw)) {
             isLogin = true;
             break;
         }
     }
+    
     fclose(csv_fp);
     sem_post(sem);
 
@@ -349,10 +353,12 @@ bool Login(int sockfd, sem_t *sem, User *user) {
         strcpy(user->id, uid);
         strcpy(user->name, fname);
         ServerSend(sockfd, "Login success\n");
+        sleep(1);
         return true;
     }
     else {
         ServerSend(sockfd, "Login failed\n");
+        sleep(1);
         return false;
     }
 
