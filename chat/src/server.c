@@ -11,13 +11,25 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-#define TCP_PORT 5100
-#define MAX_CLIENT 10
+#define TCP_PORT    5100
+#define MAX_CLIENT  10
 
-#define READ_FD 0
-#define WRITE_FD 1
+#define READ_FD     0
+#define WRITE_FD    1
 
 #define LOGIN_FILE_DIR "/home/sihyeon/workspace/veda/chat/data/login.csv"
+
+#define DISCON_SERVER_CODE  -1
+#define SERVER_MSG_CODE     0
+#define CLIENT_MSG_CODE     1
+#define ENTER_MSG_CODE      2
+#define EXIT_MSG_CODE       3
+#define LIST_MSG_CODE       4
+#define LIST_MSG_CODE2      5
+#define WHISPER_MSG_CODE    6
+#define USER_INFO_CODE      7
+#define FILE_SEND_CODE      8
+#define FILE_RECV_CODE      9
 
 typedef struct message {
     int  code;
@@ -25,6 +37,8 @@ typedef struct message {
     char name[50];
     int  group;
     char buf[BUFSIZ];
+    char filename[100];
+    int  filesize;
 } __attribute__((__packed__)) Msg;
 
 typedef struct user {
@@ -218,6 +232,8 @@ int main(int argc, char **argv) {
                         ServerSend(csock, " '!exit', '!quit', '!q'      : close connection and exit \n");
                         ServerSend(csock, " '!list', '!users'           : show user list \n");
                         ServerSend(csock, " '!group [number]'           : change group \n");
+                        ServerSend(csock, " '!send [filename]           : send file to server\n");
+                        ServerSend(csock, " '!recv [filename]           : receive file from server\n");
                         ServerSend(csock, " '!whisper [id] [message]'   : whisper to user \n");
                         ServerSend(csock, " '@ [id] [message]'          : whisper to user \n");
                         ServerSend(csock, "----------------------------------------------------------\n");
@@ -232,13 +248,13 @@ int main(int argc, char **argv) {
                         kill(getppid(), SIGUSR1);
 
                         // 종료 메시지 전송
-                        msg = make_message(-1, "", "", 0, "");
+                        msg = make_message(DISCON_SERVER_CODE, "", "", 0, "");
                         write(clients[client_idx].sockfd, &msg, sizeof(Msg));
                         break;
                     }
 
                     if (!strncmp(buf, "!list", 5) || !strncmp(buf, "!users", 6)) {
-                        msg = make_message(4, user->id, user->name, user->group, "");
+                        msg = make_message(LIST_MSG_CODE, user->id, user->name, user->group, "");
                         write(clients[client_idx].pipe1[WRITE_FD], &msg, sizeof(Msg));
                         kill(getppid(), SIGUSR1);
                         continue;
@@ -255,7 +271,7 @@ int main(int argc, char **argv) {
                         }
                         
                         // 기존 그룹 퇴장 메시지 broadcast
-                        msg = make_message(3, user->id, user->name, user->group, "");
+                        msg = make_message(EXIT_MSG_CODE, user->id, user->name, user->group, "");
                         write(clients[client_idx].pipe1[WRITE_FD], &msg, sizeof(Msg));
                         kill(getppid(), SIGUSR1);
 
@@ -263,13 +279,13 @@ int main(int argc, char **argv) {
                         user->group = atoi(group);
                         
                         // 유저 정보 전송
-                        msg = make_message(7, user->id, user->name, user->group, "");
+                        msg = make_message(USER_INFO_CODE, user->id, user->name, user->group, "");
                         write(csock, &msg, sizeof(Msg));
 
                         EnterChatRoom(csock, user->group);
 
                         // 새로운 그룹 입장 메시지 broadcast
-                        msg = make_message(2, user->id, user->name, user->group, "");
+                        msg = make_message(ENTER_MSG_CODE, user->id, user->name, user->group, "");
                         write(clients[client_idx].pipe1[WRITE_FD], &msg, sizeof(Msg));
                         kill(getppid(), SIGUSR1);
                         
@@ -289,14 +305,106 @@ int main(int argc, char **argv) {
                             continue;
                         }
 
-                        msg = make_message(6, user->id, user->name, user->group, message);
+                        msg = make_message(WHISPER_MSG_CODE, user->id, user->name, user->group, message);
                         // write(clients[client_idx].pipe1[WRITE_FD], &msg, sizeof(Msg));
                         // kill(getppid(), SIGUSR1);
                         continue;
                     }
 
+                    if (!strncmp(buf, "!send", 5)) {
+                        // 클라이언트에서 파일 전송 -> 서버에서 파일 수신
+                        char *ptr = strtok(buf, " ");
+                        char *filename = strtok(NULL, "");
+
+                        if (filename == NULL) {
+                            ServerSend(csock, "Invalid input\n");
+                            sleep(1);
+                            continue;
+                        }
+
+                        msg = make_message(FILE_SEND_CODE, user->id, user->name, user->group, filename);
+                        write(csock, &msg, sizeof(Msg));
+
+                        // 파일 청크 단위 수신
+                        Msg fmsg;
+                        memset(&fmsg, 0, sizeof(Msg));
+                        strcpy(fmsg.filename, filename);
+                        fmsg.filesize = 0;
+
+                        FILE *file = fopen(filename, "wb");
+                        if (file == NULL) {
+                            printf("file open error\n");
+                            continue;
+                        }
+
+                        int received_bytes = 0;
+
+                        // 파일을 청크 단위로 수신
+                        do {
+                            fwrite(msg.buf, 1, BUFSIZ, file);
+                            received_bytes += BUFSIZ;
+
+                            if (recv(csock, &msg, sizeof(Msg), 0) <= 0) {
+                                perror("recv()");
+                                break;
+                            }
+                        } while (received_bytes < msg.filesize);
+
+                        fclose(file);
+                        printf("file received: %s\n", filename);
+
+                        continue;
+                    }
+
+                    if (!strncmp(buf, "!recv", 5)) {
+                        // 서버에서 파일 전송 -> 클라이언트에서 파일 수신
+                        char *ptr = strtok(buf, " ");
+                        char *filename = strtok(NULL, "");
+
+                        if (filename == NULL) {
+                            ServerSend(csock, "Invalid input\n");
+                            sleep(1);
+                            continue;
+                        }
+
+                        msg = make_message(FILE_RECV_CODE, user->id, user->name, user->group, filename);
+                        write(csock, &msg, sizeof(Msg));
+
+                        // 파일 청크 단위 전송
+                        FILE *file = fopen(filename, "rb");
+                        if (file == NULL) {
+                            perror("file open error (recv)");
+                            continue;
+                        }
+
+                        Msg fmsg;
+                        memset(&fmsg, 0, sizeof(Msg));
+                        strcpy(fmsg.filename, filename);
+                        
+                        fseek(file, 0, SEEK_END);
+                        fmsg.filesize = ftell(file);
+                        fseek(file, 0, SEEK_SET);
+
+                        while (fread(fmsg.buf, 1, BUFSIZ, file) > 0) {
+                            fmsg.code = FILE_RECV_CODE;
+                            strcpy(fmsg.id, user->id);
+                            strcpy(fmsg.name, user->name);
+                            fmsg.group = user->group;
+
+                            if (send(csock, &fmsg, sizeof(Msg), 0) <= 0) {
+                                perror("send()");
+                                fclose(file);
+                                continue;
+                            }
+                        }
+
+                        fclose(file);
+
+                        continue;
+                    }
+
                     // 일반 메시지 처리
-                    msg = make_message(1, user->id, user->name, user->group, buf);
+                    msg = make_message(CLIENT_MSG_CODE, user->id, user->name, user->group, buf);
                     write(clients[client_idx].pipe1[WRITE_FD], &msg, sizeof(Msg));
                     kill(getppid(), SIGUSR1);
                 }
@@ -315,7 +423,7 @@ int main(int argc, char **argv) {
     }
 
 CLOSE:;
-    Msg msg = make_message(-1, "", "", -1, "");
+    Msg msg = make_message(DISCON_SERVER_CODE, "", "", -1, "");
     for (int i = 0; i < MAX_CLIENT; i++) {
         if (clients[i].sockfd != 0) {
             write(clients[i].pipe1[WRITE_FD], &msg, sizeof(Msg));
@@ -357,7 +465,7 @@ void siguser1(int signo) {
             }
 
             if (read(clients[i].pipe3[READ_FD], &list_msg, sizeof(Msg)) > 0) {
-                if (list_msg.code == 4)
+                if (list_msg.code == LIST_MSG_CODE) 
                     strcat(buf, list_msg.buf);
             }
         }
@@ -365,7 +473,7 @@ void siguser1(int signo) {
 
     // list 메시지 전송
     if (buf[0] != 0) {
-        list_msg = make_message(5, list_msg.id, list_msg.name, list_msg.group, buf);
+        list_msg = make_message(LIST_MSG_CODE2, list_msg.id, list_msg.name, list_msg.group, buf);
         for (int i = 0; i < MAX_CLIENT; i++) {
             if (clients[i].sockfd != 0) {
                 write(clients[i].pipe2[WRITE_FD], &list_msg, sizeof(Msg));
@@ -388,20 +496,17 @@ void siguser2(int signo) {
         if (clients[i].child_pid == getpid()) {
             if (read(clients[i].pipe2[READ_FD], &msg, sizeof(Msg)) > 0) {
 
-                if (msg.code == 4) {
-                    //char buf[BUFSIZ];
+                if (msg.code == LIST_MSG_CODE) {
                     sprintf(msg.buf, "%s [%s]\n", clients[i].user.name, clients[i].user.id);
                     printf("list: %s", msg.buf);
-                    //strcat(msg.buf, buf);
                     write(clients[i].pipe3[WRITE_FD], &msg, sizeof(Msg));
                     kill(getppid(), SIGUSR1);
                     break;
                 }
                 // list 브로드 캐스팅 받으면 클라이언트에서 각각 name, id 보내고
-                // 서버에서는 그걸 받아서 리스트 만들어서 보내주기,, 하고 싶은데 
-                // 그럴러면 pipe 하나 더 or 사용자 정의 시그널 하나 더 필요할 듯
+                // 서버에서는 그걸 받아서 리스트 만들어서 보내주기
 
-                if (msg.code == 5) {
+                if (msg.code == LIST_MSG_CODE2) {
                     if (strcmp(msg.id, clients[i].user.id) == 0) {
                         write(clients[i].sockfd, &msg, sizeof(Msg));
                         // 다른 클라이언트에서도 보임,,

@@ -12,12 +12,26 @@
 
 #define TCP_PORT 5100
 
+#define DISCON_SERVER_CODE  -1
+#define SERVER_MSG_CODE     0
+#define CLIENT_MSG_CODE     1
+#define ENTER_MSG_CODE      2
+#define EXIT_MSG_CODE       3
+#define LIST_MSG_CODE       4
+#define LIST_MSG_CODE2      5
+#define WHISPER_MSG_CODE    6
+#define USER_INFO_CODE      7
+#define FILE_SEND_CODE      8
+#define FILE_RECV_CODE      9
+
 typedef struct message {
     int  code;
     char id[20];
     char name[50];
     int  group;
     char buf[BUFSIZ];
+    char filename[100];
+    int  filesize;
 } __attribute__((__packed__)) Msg;
 
 typedef struct user {
@@ -90,45 +104,105 @@ int main(int argc, char** argv) {
                 return -1;
             }
 
-            if (msg.code == -1) {   // 서버 종료
+            if (msg.code == DISCON_SERVER_CODE) {   // 서버 종료
                 printf("=====  Disconnected from server  =====\n");
                 break;
             }
-            else if (msg.code == 0) {    // 서버가 직접 보낸 메시지
+            else if (msg.code == SERVER_MSG_CODE) {    // 서버가 직접 보낸 메시지
                 printf("%s", msg.buf);
             }
-            else if (msg.code == 1) {   // 다른 클라이언트가 보낸 메시지
+            else if (msg.code == CLIENT_MSG_CODE) {   // 다른 클라이언트가 보낸 메시지
                 if (msg.group == user.group)
                     printf("%s[%s]: %s", msg.name, msg.id, msg.buf);
             }
-            else if (msg.code == 2) {   // 채팅방 입장
+            else if (msg.code == ENTER_MSG_CODE) {   // 채팅방 입장
                 if (msg.group == user.group)
                     printf("%s[%s] entered the chat room\n", msg.name, msg.id);
             }
-            else if (msg.code == 3) {   // 채팅방 퇴장
+            else if (msg.code == EXIT_MSG_CODE) {   // 채팅방 퇴장
                 if (msg.group == user.group)
                     printf("%s[%s] left the chat room\n", msg.name, msg.id);
             }
-            // else if (msg.code == 4) {   // 사용자 리스트 - 서버 내부 처리용
+            // else if (msg.code == LIST_MSG_CODE) {   // 사용자 리스트 - 서버 내부 처리용
             //     printf("======== client list ========\n");
             //     printf("%s", msg.buf);
             //     printf("=============================\n");
             // }
-            else if (msg.code == 5) {   // 사용자 리스트 - 클라이언트 출력용
+            else if (msg.code == LIST_MSG_CODE2) {   // 사용자 리스트 - 클라이언트 출력용
                 if (msg.group == user.group) {
                     printf("======== client list ========\n");
                     printf("%s", msg.buf);
                     printf("=============================\n");
                 }
             }
-            else if (msg.code == 6) {   // 귓속말
+            else if (msg.code == WHISPER_MSG_CODE) {   // 귓속말
                 //if (strcmp(msg.id, user.id) == 0)
                     printf("%s[%s] whispers to me : %s", msg.name, msg.id, msg.buf);
             }
-            else if (msg.code == 7) {   // user 설정 코드
+            else if (msg.code == USER_INFO_CODE) {   // user 설정 코드
                 strcpy(user.id, msg.id);
                 strcpy(user.name, msg.name);
                 user.group = msg.group;
+            }
+            else if (msg.code == FILE_SEND_CODE) {   // 파일 전송
+                printf("send file(%s) to server\n", msg.name, msg.id, msg.buf);
+
+                FILE* file = fopen(msg.buf, "rb");
+                if (file == NULL) {
+                    printf("file open error\n");
+                    continue;;
+                }
+
+                Msg fmsg;
+                memset(&fmsg, 0, sizeof(Msg));
+                strcpy(fmsg.filename, msg.buf);
+                
+                fseek(file, 0, SEEK_END);
+                fmsg.filesize = ftell(file);
+                fseek(file, 0, SEEK_SET);
+
+                while (fread(fmsg.buf, 1, BUFSIZ, file) > 0) {
+                    fmsg.code = FILE_SEND_CODE;
+                    strcpy(fmsg.id, user.id);
+                    strcpy(fmsg.name, user.name);
+                    fmsg.group = user.group;
+
+                    if (send(ssock, &fmsg, sizeof(Msg), 0) <= 0) {
+                        perror("send()");
+                        fclose(file);
+                        continue;;
+                    }
+                }
+            }
+            else if (msg.code == FILE_RECV_CODE) {   // 파일 수신
+
+                // 파일 청크 단위 수신
+                Msg fmsg;
+                memset(&fmsg, 0, sizeof(Msg));
+                strcpy(fmsg.filename, msg.buf);
+                fmsg.filesize = 0;
+
+                FILE* file = fopen(msg.buf, "wb");
+                if (file == NULL) {
+                    printf("file open error\n");
+                    continue;
+                }
+
+                int received_bytes = 0;
+
+                // 파일을 청크 단위로 수신
+                do {
+                    fwrite(msg.buf, 1, BUFSIZ, file);
+                    received_bytes += BUFSIZ;
+
+                    if (recv(ssock, &msg, sizeof(Msg), 0) <= 0) {
+                        perror("파일 수신 중 오류 발생");
+                        break;
+                    }
+                } while (received_bytes < msg.filesize);
+
+                fclose(file);
+                printf("%s[%s] receives a file : %s\n", msg.name, msg.id, msg.buf);
             }
             else {
                 printf("Unknown code\n");
