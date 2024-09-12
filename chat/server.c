@@ -8,190 +8,72 @@
 #include <string.h>
 #include <sys/socket.h>
 #include <sys/time.h>
-#include <unistd.h>
 #include <sys/wait.h>
+#include <unistd.h>
 
-#define TCP_PORT    5100
-#define MAX_CLIENT  10
+#define TCP_PORT 5100
+#define MAX_CLIENT 10
 
-#define READ_FD     0
-#define WRITE_FD    1
-
-static int clientSock[MAX_CLIENT];
-static int pipes[MAX_CLIENT][2];
-static int child_pid[MAX_CLIENT];
-static int client_count = 0;
-static int my_idx = 0;
-
-// client
-// 1. 사용자 지정 이름, 색상 설정
-// 2. 메시지 입력, 전송
-// 3. 다른 client 메시지 수신, 출력 -> fork
-
-typedef struct user {
-    char id[BUFSIZ];
-    char name[BUFSIZ];
-} __attribute__((__packed__)) User;
+#define READ_FD 0
+#define WRITE_FD 1
 
 typedef struct message {
     int code;
-    char id[BUFSIZ];
-    char name[BUFSIZ];
-    char mesg[BUFSIZ];
-} __attribute__((__packed__)) Message;
+    char id[20];
+    char name[50];
+    char buf[BUFSIZ];
+} __attribute__((__packed__)) Msg;
 
-typedef struct pipem {
-    Message msg;
-    int idx;
-    int pid;
-    int code;   // 0: from child to parent, 1: from parent to child
-} __attribute__((__packed__)) PipeM;
+typedef struct client {
+    int sockfd;
+    int pipe1[2];
+    int pipe2[2];
+    int child_pid;
+} __attribute__((__packed__)) Client;
 
-// 파이프로 통신 시에 PipeM으로 변환!!!!!!!!!!!!!!!!!!!!!!!!!
+typedef struct user {
+    char id[20];
+    char name[50];
+} __attribute__((__packed__)) User;
 
-void sigchild(int signo) {
-    printf("Signal from child to remove client: %d\n", signo);
+////    전역 변수    ////
 
-    client_count--;
+Client clients[MAX_CLIENT];
 
-    for (int i = 0; i < MAX_CLIENT; i++) {
-        if (child_pid[i] == signo) {
-            clientSock[i] = 0;
-            break;
-        }
-    }
+////   함수 선언    ////
+void siguser1(int signo);
+void siguser2(int signo);
+void sigchild(int signo);
+void close_client(int idx);
 
-    printf("Client disconnected. Active clients: %d\n", client_count);
-}
+Msg make_message(const int code, const char *id, const char *name, const char *buf);
 
-// 자식 프로세스에서 호출 -> 부모 프로세스에서 실행 - client 수신 시그널
-void siguser1(int signo) {
+int SendFromServer(int sockfd, const char *buf);
 
-    printf("Signal(SIGUSR1) from child : %d\n", signo);
-    fflush(stdout);
+int HelloWorld(int sockfd, sem_t *sem, User *user);
+bool Login(int sockfd, sem_t *sem, User *user);
+bool Resgister(int sockfd, sem_t *sem, User *user);
 
-    PipeM *pm = (PipeM *)malloc(sizeof(PipeM));
-    memset(pm, 0, sizeof(PipeM));
-
-    // broadcast
-    for (int i = 0; i < MAX_CLIENT; i++) {
-        if (child_pid[i] < 0)
-            continue;
-        
-        if (read(pipes[i][READ_FD], pm, sizeof(PipeM)) > 0) {
-            if (pm->code == 0) {
-                for (int j = 0; j < MAX_CLIENT; j++) {
-                    printf("[SIGUSR1] from pipe(%d) to pipe(%d), getpid(%d) : %s\n", i, j, getpid(), pm->msg.mesg);
-
-                    pm->code = 1;
-                    write(pipes[j][WRITE_FD], pm, sizeof(PipeM));
-                    kill(child_pid[j], SIGUSR2);
-                }
-            }
-            else if (pm->code == 1) {   
-                write(pipes[i][WRITE_FD], pm, sizeof(PipeM));
-                //kill(child_pid[i], SIGUSR2);
-            }
-        }
-    }
-
-    return;
-}
-
-// 부모 프로세스에서 호출 -> 자식 프로세스에서 실행 - client socket으로 전송 시그널
-void siguser2(int signo) {
-    printf("Signal(SIGUSR2) from parent(SIGUSR1) : %d\n", signo);
-    fflush(stdout);
-
-    if (my_idx < 0) {
-        printf("[SIGUSR2] idx(%d) not found\n", my_idx);
-        return;
-    }
-
-    PipeM *pm = (PipeM *)malloc(sizeof(PipeM));
-    memset(pm, 0, sizeof(PipeM));
-
-    for (int i = 0; i < MAX_CLIENT; i++) {
-        if (read(pipes[i][READ_FD], pm, sizeof(PipeM)) > 0) {
-            if ((pm->code == 1)) {
-                printf("[SIGUSR2] from pipe(%d) to csock(%d), getpid(%d) : %s\n", i, clientSock[i], getpid(), pm->msg.mesg);
-                if (write(clientSock[i], &(pm->msg), sizeof(Message)) < 0) {
-                    perror("[sigusr2] write() to client");
-                    exit(0);
-                }
-            }
-            else if (pm->code == 0) {
-                write(pipes[i][WRITE_FD], pm, sizeof(PipeM));
-                //kill(getppid() SIGUSR1);
-            }
-            else {
-                printf("[SIGUSR2] pipe(%d): invalid code(%d)\n", i, pm->code);
-            }
-        }
-    }
-
-    free(pm);
-
-    return;
-}
-
-void Send(int sockfd, const char *buf, User* user/*, int code*/) {
-    Message* msg = (Message*)malloc(sizeof(Message));
-    memset(msg, 0, sizeof(Message));
-    memset(msg->id, 0, BUFSIZ);
-    memset(msg->name, 0, BUFSIZ);
-    memset(msg->mesg, 0, BUFSIZ);
-
-    strcpy(msg->mesg, buf);
-    msg->code = 0;
-
-    if (user == NULL) {
-        strcpy(msg->id, "server");
-        strcpy(msg->name, "server");
-    }
-    else {
-        strcpy(msg->id, user->id);
-        strcpy(msg->name, user->name);
-    }
-
-    //size_t n = send(sockfd, msg, sizeof(Message), MSG_DONTWAIT);
-    size_t n = write(sockfd, msg, sizeof(Message));
-    usleep(100);
-    free(msg);
-
-    if (n <= 0) {
-        perror("Send()");
-        exit(0);
-    }
-}
+////    main 함수    ////
 
 int main(int argc, char **argv) {
     pid_t pid;
-    socklen_t clen;
+    // socklen_t clen;
     struct sockaddr_in servaddr, cliaddr;
-
-    FILE *csv_fp;
+    FILE *fp;
     sem_t *sem;
+    User *user;
 
-    int port = TCP_PORT;
-    int ssock;
+    int ssock, csock, port = TCP_PORT;
 
-    char mesg[BUFSIZ];
+    ///////
 
-    //////////////////////////////
-
-    memset(clientSock, 0, sizeof(clientSock));
-
-    sem = sem_open("login_sem", O_CREAT, 0644, 1);
-
-    if (argc == 2) {
+    if (argc == 2)
         port = atoi(argv[1]);
-    }
 
-    // server tcp socket 생성
     if ((ssock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-        perror("socket()");
-        return -1;
+        perror("socket");
+        exit(1);
     }
 
     memset(&servaddr, 0, sizeof(servaddr));
@@ -200,259 +82,328 @@ int main(int argc, char **argv) {
     servaddr.sin_port = htons(port);
 
     if (bind(ssock, (struct sockaddr *)&servaddr, sizeof(servaddr)) < 0) {
-        perror("bind()");
-        return -1;
+        perror("bind");
+        exit(1);
     }
 
-    if (listen(ssock, MAX_CLIENT) < 0) {
-        perror("listen()");
-        return -1;
+    if (listen(ssock, 5) < 0) {
+        perror("listen");
+        exit(1);
     }
 
-    clen = sizeof(cliaddr);
+    sem = sem_open("login", O_CREAT, 0644, 1);
 
-    do {
-        int n;
-        char ip[BUFSIZ];
-        int csock;
+    memset(clients, 0, sizeof(clients));
 
-        User user;
-        memset(&user, 0, sizeof(User));
+    while (true) {
+        char client_ip[BUFSIZ];
+        int client_port, clen, client_idx = -1;
 
+        // client 연결됨
         clen = sizeof(cliaddr);
-        csock = accept(ssock, (struct sockaddr *)&cliaddr, &clen);
-        inet_ntop(AF_INET, &cliaddr.sin_addr, ip, BUFSIZ);
-        printf("Client is connected : %s\n", ip);
-        client_count += 1;
-        
-        // client socket 저장
-        int idx;
-        for (idx = 0; idx < MAX_CLIENT; idx++) {
-            if (clientSock[idx] == 0) {
-                clientSock[idx] = csock;
+        if ((csock = accept(ssock, (struct sockaddr *)&cliaddr, &clen)) < 0) {
+            perror("accept");
+            exit(1);
+        }
+        inet_ntop(AF_INET, &cliaddr.sin_addr, client_ip, sizeof(client_ip));
+        client_port = ntohs(cliaddr.sin_port);
+        printf("client connected: %s:%d\n", client_ip, client_port);
+
+        // find empty slot
+        for (int i = 0; i < MAX_CLIENT; i++) {
+            if (clients[i].sockfd == 0) {
+                client_idx = i;
+
+                clients[i].sockfd = csock;
+                // pipe
+                if (pipe(clients[i].pipe1) < 0 || pipe(clients[i].pipe2) < 0) {
+                    perror("pipe");
+                    exit(1);
+                }
+
                 break;
             }
         }
 
-        // pipe 생성
-        if (pipe(pipes[idx]) < 0) {
-            perror("pipe()");
-            return -1;
+        if (client_idx == -1) {
+            printf("too many clients\n");
+            // send
+            close(csock);
+            continue;
         }
 
-        // pipe non-blocking 설정 - 일단 에러 처리 안함
-        int flags = fcntl(pipes[idx][READ_FD], F_GETFL, 0);
-        flags |= O_NONBLOCK;
-        fcntl(pipes[idx][READ_FD], F_SETFL, flags);
+        // pipe non-blocking
+        fcntl(clients[client_idx].pipe1[READ_FD], F_SETFL, O_NONBLOCK);
+        fcntl(clients[client_idx].pipe1[WRITE_FD], F_SETFL, O_NONBLOCK);
+        fcntl(clients[client_idx].pipe2[READ_FD], F_SETFL, O_NONBLOCK);
+        fcntl(clients[client_idx].pipe2[WRITE_FD], F_SETFL, O_NONBLOCK);
 
-        flags = fcntl(pipes[idx][WRITE_FD], F_GETFL, 0);
-        flags |= O_NONBLOCK;
-        fcntl(pipes[idx][WRITE_FD], F_SETFL, flags);
-        
-
-        if ((pid = fork()) < 0)  ///////////////////////  fork  //////////////////////////////
-            perror("fork()");
-        else if (pid == 0) {  // Child Proc. - 클라이언트가 연결될 때 마다 
+        // fork
+        if ((pid = fork()) < 0) {  ///////////////////////////////////////
+            perror("fork");
+            exit(1);
+        }
+        else if (pid == 0) {  // child
             close(ssock);
-            //close(pipes[idx][READ_FD]);
+            // close(clients[client_idx].pipe[WRITE_FD]);
+            clients[client_idx].child_pid = getpid();
 
+            // signal
             signal(SIGUSR2, siguser2);
 
-            // 로그인, 사용자 이름 설정
+            // first screen
+            user = (User *)malloc(sizeof(User));
+            memset(user, 0, sizeof(User));
+            int out;
             while (true) {
-                int num;
-                char buf[BUFSIZ];
-
-                Send(csock, "\033[2J\033[1;1H", NULL);
-                Send(csock, "Welcome to chat server\n", NULL);
-                Send(csock, "=======================\n", NULL);
-                Send(csock, "===== Select Menu =====\n", NULL);
-                Send(csock, "=======================\n", NULL);
-                Send(csock, "1. Login\n", NULL);
-                Send(csock, "2. Register\n", NULL);
-                Send(csock, "3. Exit\n", NULL);
-                Send(csock, "=======================\n", NULL);
-                Send(csock, "Input >> ", NULL);
-
-                read(csock, buf, BUFSIZ);
-                num = atoi(buf);
-
-                if (num == 1) {
-                    char uid[BUFSIZ];
-                    char upw[BUFSIZ];
-
-                    char fid[BUFSIZ];
-                    char fpw[BUFSIZ];
-                    char fname[BUFSIZ];
-
-                    bool isLogin = false;
-
-                    Send(csock, "\033[2J\033[1;1H", NULL);
-                    Send(csock, "Input ID >> ", NULL);
-                    n = read(csock, uid, BUFSIZ);
-                    uid[n] = '\0';
-                    strcpy(strtok(uid, "\n"), uid);
-
-                    Send(csock, "Input Password >> ", NULL);
-                    n = read(csock, upw, BUFSIZ);
-                    upw[n] = '\0';
-                    strcpy(strtok(upw, "\n"), upw);
-
-                    // csv 파일(세마포어 필요)로 로그인 유효성 검사
-                    sem_wait(sem);
-                    csv_fp = fopen("login.csv", "r");
-
-                    // 사용자 정보 검색
-                    while (fscanf(csv_fp, "%s, %s, %s\n", fid, fpw, fname) != EOF) {
-                        if (!strcmp(uid, fid) && !strcmp(upw, fpw)) {
-                            isLogin = true;
-                            break;
-                        }
-                    }
-                    fclose(csv_fp);
-                    sem_post(sem);
-
-                    if (isLogin) {
-                        Send(csock, "Login Success !!\n", NULL);
-                        strcpy(user.id, uid);
-                        strcpy(user.name, fname);
-                        break;
-                    }
-                    else {
-                        Send(csock, "Login Failed !!\n", NULL);
-                        continue;
-                    }
-                }
-                else if (num == 2) {
-                    //char buf[BUFSIZ];
-                    memset(buf, 0, BUFSIZ);
-
-                    char uid[BUFSIZ];
-                    char upw[BUFSIZ];
-                    char uname[BUFSIZ];
-
-                    Send(csock, "\033[2J\033[1;1H", NULL);
-                    Send(csock, "Input ID >> ", NULL);
-                    n = read(csock, buf, BUFSIZ);
-                    buf[n] = '\0';                   // null 종료
-                    strcpy(uid, strtok(buf, "\n"));  // 개행 문자 제거
-                    memset(buf, 0, BUFSIZ);
-
-                    Send(csock, "Input Password >> ", NULL);
-                    n = read(csock, buf, BUFSIZ);
-                    buf[n] = '\0';                   // null 종료
-                    strcpy(upw, strtok(buf, "\n"));  // 개행 문자 제거
-                    memset(buf, 0, BUFSIZ);
-
-                    Send(csock, "Input Name >> ", NULL);
-                    n = read(csock, buf, BUFSIZ);
-                    buf[n] = '\0';                     // null 종료
-                    strcpy(uname, strtok(buf, "\n"));  // 개행 문자 제거
-                    memset(buf, 0, BUFSIZ);
-
-                    // csv 파일(세마포어 필요)로 회원가입
-                    sem_wait(sem);
-
-                    csv_fp = fopen("login.csv", "a");
-                    fprintf(csv_fp, "%s, %s, %s\n", uid, upw, uname);
-                    fclose(csv_fp);
-
-                    sem_post(sem);
-
-                    strcpy(user.id, uid);
-                    strcpy(user.name, uname);
-
-                    Send(csock, "Register Success !!\n", NULL);
+                out = HelloWorld(clients[client_idx].sockfd, sem, user);
+                if (out == -1) {
+                    close_client(client_idx);
+                    goto CLOSE;
                     break;
                 }
-                else if (num == 3) {
-                    close(csock);
-                    goto CLOSE;  // 해당 클라이언트 listen 종료
-                }
-                else {
-                    Send(csock, "\033[2J\033[1;1H", NULL);
-                    Send(csock, "Invalid input !!\n", NULL);
-                    continue;
+
+                if (out == true) {
+                    break;
                 }
             }
 
-            ///// todo: 채팅 그룹 설정
+            if (user->id[0] == 0) {
+                close_client(client_idx);
+                goto CLOSE;
+            }
 
-            // 최대 접속자 제한?
+            // read socket & write pipe
+            Msg msg;
+            while (true) {
+                char buf[BUFSIZ];
 
-
-            char buf[BUFSIZ];
-            // 채팅
-            do {
-                memset(buf, 0, BUFSIZ); 
-
-                if ((n = read(csock, buf, BUFSIZ)) <= 0) {
-                    perror("read()");
-                    return -1;
+                if (read(clients[client_idx].sockfd, buf, sizeof(buf)) > 0) {
+                    printf("child: %s\n", buf);
+                    msg = make_message(0, user->id, user->name, buf);
+                    write(clients[client_idx].pipe1[WRITE_FD], &msg, sizeof(Msg));
+                    kill(getppid(), SIGUSR1);
                 }
+            }
 
-                printf("%s[%s]: %s", user.id, user.name, buf);
-
-                // broadcast : pipe에 쓰기
-                Message *msg = (Message *)malloc(sizeof(Message));
-                memset(msg, 0, sizeof(Message));
-                msg->code = 0;
-                strcpy(msg->id, user.id);
-                strcpy(msg->name, user.name);
-                strcpy(msg->mesg, buf);
-
-                PipeM *pm = (PipeM *)malloc(sizeof(PipeM));
-                memset(pm, 0, sizeof(PipeM));
-                strcpy(pm->msg.id, msg->id);
-                strcpy(pm->msg.name, msg->name);
-                strcpy(pm->msg.mesg, msg->mesg);
-                pm->msg.code = msg->code;
-                pm->idx = idx;
-                pm->pid = getpid();
-                pm->code = 0;
-
-                my_idx = idx;
-                write(pipes[idx][WRITE_FD], pm, sizeof(PipeM));
-                kill(getppid(), SIGUSR1);
-
-                // echo 
-                Send(csock, buf, &user);
-
-                fflush(stdout);
-
-                // 다른 client에도 write -> broadcast
-                // client 접속 정보 (csock, cliaddr등) 저장하기 위한 배열 필요
-
-                // !list, 리스트, 귓속말, 강조 등 기능 추가
-                // 파일 전송?
-                
-                // free(buf);
-            } while (strncmp(buf, "q", 1));
-
-            kill(getppid(), SIGCHLD);
+            close_client(client_idx);
         }
-        else if (pid > 0) {  //////////////////////  Parent Proc.  ////////////////////////////// 
-            //close(csock);
+        else {  // parent
+            // close(clients[client_idx].pipe[READ_FD]);
+            clients[client_idx].child_pid = pid;
 
-            // child proc. signal 처리 설정
+            // signal
             signal(SIGUSR1, siguser1);
             signal(SIGCHLD, sigchild);
-
-            // close(pipes[idx][WRITE_FD]);
-            child_pid[idx] = pid;
         }
-        else {
-            perror("fork()");
-        }                   //////////////// fork end //////////////////////
-
-        //close(csock);
-
-    } while (strncmp(mesg, "q", 1));
+    }
 
 CLOSE:;
-    sem_close(sem);
-    sem_unlink("login_sem");
     close(ssock);
 
     return 0;
+}
+
+////  함수 정의    ////
+
+// 부모 프로세스에서 파이프로 메시지를 받아 다른 자식 프로세스(sigusr2)에게 전달
+void siguser1(int signo) {
+    printf("SIGUSER1\n");
+
+    Msg msg;
+    for (int i = 0; i < MAX_CLIENT; i++) {
+        if (clients[i].sockfd != 0) {
+            if (read(clients[i].pipe1[READ_FD], &msg, sizeof(Msg)) > 0) {
+                for (int j = 0; j < MAX_CLIENT; j++) {
+                    if (clients[j].sockfd != 0) {
+                        write(clients[j].pipe2[WRITE_FD], &msg, sizeof(Msg));
+                        kill(clients[j].child_pid, SIGUSR2);
+                    }
+                }
+            }
+        }
+    }
+}
+
+// 자식 프로세스에서 파이프로 메시지를 받아 클라이언트(csock)에 전달
+void siguser2(int signo) {
+    printf("SIGUSER2\n");
+
+    // 자식 프로세스의 clients 배열은 자신과 이전에 생성된 자식 프로세스의 정보만 가지고 있음
+    // -> getpid()으로 자신의 pid를 찾아서 메시지를 전달해야 함
+
+    Msg msg;
+    for (int i = 0; i < MAX_CLIENT; i++) {
+        if (clients[i].child_pid == getpid()) {
+            if (read(clients[i].pipe2[READ_FD], &msg, sizeof(Msg)) > 0) {
+                write(clients[i].sockfd, &msg, sizeof(Msg));
+            }
+            break;
+        }
+    }
+}
+
+// 클라이언트 연결 종료 시
+void close_client(int idx) {
+    close(clients[idx].sockfd);
+    close(clients[idx].pipe1[READ_FD]);
+    close(clients[idx].pipe1[WRITE_FD]);
+    close(clients[idx].pipe2[READ_FD]);
+    close(clients[idx].pipe2[WRITE_FD]);
+    clients[idx].sockfd = 0;
+    clients[idx].child_pid = 0;
+}
+
+// 자식 프로레스 종료 시
+void sigchild(int signo) {
+    // ..?
+}
+
+// 메시지 생성 함수
+Msg make_message(const int code, const char *id, const char *name, const char *buf) {
+    Msg msg;
+    msg.code = code;
+    strcpy(msg.id, id);
+    strcpy(msg.name, name);
+    strcpy(msg.buf, buf);
+    return msg;
+}
+
+// 서버에서 클라이언트로 메시지 전송
+int ServerSend(int sockfd, const char *buf) {
+    Msg msg = make_message(0, "", "", buf);
+    return write(sockfd, &msg, sizeof(Msg));
+}
+
+// 첫 화면
+int HelloWorld(int sockfd, sem_t *sem, User *user) {
+    int num;
+    char buf[BUFSIZ];
+
+    ServerSend(sockfd, "\033[2J\033[1;1H");
+    ServerSend(sockfd, "Welcome to chat server\n");
+    ServerSend(sockfd, "=======================\n");
+    ServerSend(sockfd, "===== Select Menu =====\n");
+    ServerSend(sockfd, "=======================\n");
+    ServerSend(sockfd, "1. Login\n");
+    ServerSend(sockfd, "2. Register\n");
+    ServerSend(sockfd, "3. Exit\n");
+    ServerSend(sockfd, "=======================\n");
+    ServerSend(sockfd, "Input >> ");
+
+    read(sockfd, buf, sizeof(buf));
+    num = atoi(buf);
+
+    if (num == 1) {
+        while(!Login(sockfd, sem, user)) {};
+        return true;
+    }
+    else if (num == 2) {
+        while(!Resgister(sockfd, sem, user)) {};
+        return true;
+    }
+    else if (num == 3) {
+        return -1;
+    }
+    else {
+        ServerSend(sockfd, "Invalid input\n");
+        return false;
+    }
+
+    return false;
+}
+
+// 로그인 함수
+bool Login(int sockfd, sem_t *sem, User *user) {
+    char buf[BUFSIZ], uid[20], upw[50];
+    char fid[20], fpw[50], fname[50];
+    int n;
+    FILE *csv_fp;
+    bool isLogin = false;
+
+    ServerSend(sockfd, "\033[2J\033[1;1H");
+    ServerSend(sockfd, "Input ID >> ");
+    n = read(sockfd, buf, BUFSIZ);
+    buf[n] = '\0';
+    strncpy(uid, strtok(buf, "\n"), 20);
+    memset(buf, 0, BUFSIZ);
+
+    ServerSend(sockfd, "Input Password >> ");
+    n = read(sockfd, buf, BUFSIZ);
+    buf[n] = '\0';
+    strncpy(upw, strtok(buf, "\n"), 50);
+    memset(buf, 0, BUFSIZ);
+
+    // csv로 로그인 유효성 검사
+    sem_wait(sem);
+    csv_fp = fopen("login.csv", "r");
+    while (fgets(buf, BUFSIZ, csv_fp) != NULL) {
+        sscanf(buf, "%[^,], %[^,], %s", fid, fpw, fname);
+
+        if (!strcmp(uid, fid) && !strcmp(upw, fpw)) {
+            isLogin = true;
+            break;
+        }
+    }
+    
+    fclose(csv_fp);
+    sem_post(sem);
+
+    if (isLogin) {
+        strcpy(user->id, uid);
+        strcpy(user->name, fname);
+        ServerSend(sockfd, "Login success\n");
+        sleep(1);
+        return true;
+    }
+    else {
+        ServerSend(sockfd, "Login failed\n");
+        sleep(1);
+        return false;
+    }
+
+    return true;
+}
+
+// 회원가입 함수
+bool Resgister(int sockfd, sem_t *sem, User *user) {
+    char buf[BUFSIZ];
+    char id[20], name[50], pw[50];
+    int n;
+    FILE *csv_fp;
+
+    ServerSend(sockfd, "\033[2J\033[1;1H");
+    ServerSend(sockfd, "Input ID >> ");
+    n = read(sockfd, buf, BUFSIZ);
+    buf[n] = '\0';
+    strncpy(id, strtok(buf, "\n"), 20);
+    memset(buf, 0, BUFSIZ);
+
+    ServerSend(sockfd, "Input Name >> ");
+    n = read(sockfd, buf, BUFSIZ);
+    buf[n] = '\0';
+    strncpy(name, strtok(buf, "\n"), 50);
+    memset(buf, 0, BUFSIZ);
+
+    ServerSend(sockfd, "Input Password >> ");
+    n = read(sockfd, buf, BUFSIZ);
+    buf[n] = '\0';
+    strncpy(pw, strtok(buf, "\n"), 50);
+    memset(buf, 0, BUFSIZ);
+
+    // file semaphore
+    sem_wait(sem);
+
+    csv_fp = fopen("login.csv", "a");
+    fprintf(csv_fp, "%s, %s, %s\n", id, pw, name);
+    fclose(csv_fp);
+
+    sem_post(sem);
+
+    strcpy(user->id, id);
+    strcpy(user->name, name);
+
+    ServerSend(sockfd, "Register success\n");
+
+    return true;
 }

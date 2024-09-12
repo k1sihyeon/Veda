@@ -14,10 +14,10 @@
 
 typedef struct message {
     int code;
-    char id[20];
-    char name[50];
-    char buf[BUFSIZ];
-} __attribute__((__packed__)) Msg;
+    char id[BUFSIZ];
+    char name[BUFSIZ];
+    char mesg[BUFSIZ];
+} Message;
 
 void sigfunc(int no) {
     printf("Signal from child : %d\n", no);
@@ -74,17 +74,24 @@ int main(int argc, char** argv) {
         char buf[BUFSIZ];
 
         while (true) {
-            Msg msg;
+            Message* msgb = (Message *)malloc(sizeof(Message));
+            memset(buf, 0, BUFSIZ);  // mesg 지우기
+            memset(msgb, 0, sizeof(Message));
+            memset(msgb->id, 0, BUFSIZ);
+            memset(msgb->name, 0, BUFSIZ);
+            memset(msgb->mesg, 0, BUFSIZ);
 
             // 서버 -> 소켓 -> mesg
-            if (recv(ssock, &msg, sizeof(Msg), 0) <= 0) {
+            if (recv(ssock, msgb, sizeof(Message), 0) <= 0) {
                 perror("recv()");
                 return -1;
             }
 
             // mesg 출력
-            printf("%s[%s]: %s", msg.id, msg.name, msg.buf);
+            printf("%s[%s]: %s", msgb->id, msgb->name, msgb->mesg);
             fflush(stdout);
+
+            free(msgb);
         }
     }
     else if (pid > 0) {  // Parent Process - 사용자가 입력한 메시지를 서버로 전송
@@ -96,9 +103,6 @@ int main(int argc, char** argv) {
             fflush(stdin);
             // 사용자 메시지 키보드 입력
             fgets(buf, BUFSIZ, stdin);
-
-            // 입력한 문자열 화면에서 지우기
-            printf("\033[1A\033[2K");
             
             // 메시지를 소켓으로 변환 후 전송
             if (send(ssock, buf, BUFSIZ, MSG_DONTWAIT) <= 0) {
