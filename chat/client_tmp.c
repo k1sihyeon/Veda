@@ -15,7 +15,7 @@
 typedef struct message {
     int code;
     char id[20];
-    char name[20];
+    char name[50];
     char buf[BUFSIZ];
 } __attribute__((__packed__)) Msg;
 
