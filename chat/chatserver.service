@@ -4,7 +4,7 @@ Description=Chat Server
 [Service]
 Type=simple
 User=sihyeon
-ExecStart=/home/sihyeon/workspace/veda/chat/src/server
+ExecStart=/home/sihyeon/workspace/veda/chat/bin/server
 TimeoutSec=0
 StandardOutput=tty
 RemainAfterExit=yes

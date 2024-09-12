@@ -13,11 +13,18 @@
 #define TCP_PORT 5100
 
 typedef struct message {
-    int code;
+    int  code;
     char id[20];
     char name[50];
+    int  group;
     char buf[BUFSIZ];
 } __attribute__((__packed__)) Msg;
+
+typedef struct user {
+    char id[20];
+    char name[50];
+    int  group;
+} __attribute__((__packed__)) User;
 
 void sigfunc(int no) {
     //printf("Signal from child : %d\n", no);
@@ -31,7 +38,7 @@ int main(int argc, char** argv) {
     int ssock;
     int port = TCP_PORT;
 
-    char mesg[BUFSIZ];
+    User user;
 
     /////////////////////////////////////
 
@@ -72,6 +79,7 @@ int main(int argc, char** argv) {
     else if (pid == 0) {  // Child Process - 서버로부터 받은 메시지를 출력
         
         char buf[BUFSIZ];
+        memset(&user, 0, sizeof(User));
 
         while (true) {
             Msg msg;
@@ -90,13 +98,16 @@ int main(int argc, char** argv) {
                 printf("%s", msg.buf);
             }
             else if (msg.code == 1) {   // 다른 클라이언트가 보낸 메시지
-                printf("%s[%s]: %s", msg.name, msg.id, msg.buf);
+                if (msg.group == user.group)
+                    printf("%s[%s]: %s", msg.name, msg.id, msg.buf);
             }
             else if (msg.code == 2) {   // 채팅방 입장
-                printf("%s[%s] entered the chat room\n", msg.name, msg.id);
+                if (msg.group == user.group)
+                    printf("%s[%s] entered the chat room\n", msg.name, msg.id);
             }
             else if (msg.code == 3) {   // 채팅방 퇴장
-                printf("%s[%s] left the chat room\n", msg.name, msg.id);
+                if (msg.group == user.group)
+                    printf("%s[%s] left the chat room\n", msg.name, msg.id);
             }
             // else if (msg.code == 4) {   // 사용자 리스트 - 서버 내부 처리용
             //     printf("======== client list ========\n");
@@ -104,12 +115,20 @@ int main(int argc, char** argv) {
             //     printf("=============================\n");
             // }
             else if (msg.code == 5) {   // 사용자 리스트 - 클라이언트 출력용
-                printf("======== client list ========\n");
-                printf("%s", msg.buf);
-                printf("=============================\n");
+                if (msg.group == user.group) {
+                    printf("======== client list ========\n");
+                    printf("%s", msg.buf);
+                    printf("=============================\n");
+                }
             }
             else if (msg.code == 6) {   // 귓속말
-                printf("%s[%s] whispers to me : %s", msg.name, msg.id, msg.buf);
+                //if (strcmp(msg.id, user.id) == 0)
+                    printf("%s[%s] whispers to me : %s", msg.name, msg.id, msg.buf);
+            }
+            else if (msg.code == 7) {   // user 설정 코드
+                strcpy(user.id, msg.id);
+                strcpy(user.name, msg.name);
+                user.group = msg.group;
             }
             else {
                 printf("Unknown code\n");

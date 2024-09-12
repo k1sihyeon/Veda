@@ -23,6 +23,7 @@ typedef struct message {
     int  code;
     char id[20];
     char name[50];
+    int  group;
     char buf[BUFSIZ];
 } __attribute__((__packed__)) Msg;
 
@@ -51,14 +52,14 @@ void siguser2(int signo);
 void sigchild(int signo);
 void close_client(int idx);
 
-Msg make_message(const int code, const char *id, const char *name, const char *buf);
+Msg make_message(const int code, const char *id, const char *name, const int group, const char *buf);
 
 int ServerSend(int sockfd, const char *buf);
 
 int HelloWorld(int sockfd, sem_t *sem, User *user);
 bool Login(int sockfd, sem_t *sem, User *user);
 bool Resgister(int sockfd, sem_t *sem, User *user);
-void EnterChatRoom(int sockfd);
+void EnterChatRoom(int sockfd, int group);
 
 ////    main 함수    ////
 
@@ -181,21 +182,28 @@ int main(int argc, char **argv) {
                 goto CLOSE;
             }
 
+            // 기본 그룹 0
+            user->group = 0;
+
             strcpy(clients[client_idx].user.id, user->id);
             strcpy(clients[client_idx].user.name, user->name);
-            // clients[client_idx].user.group = user->group;
+            clients[client_idx].user.group = user->group;
+
+            // 유저 정보 전송
+            Msg msg;
+            msg = make_message(7, user->id, user->name, user->group, "");
+            write(csock, &msg, sizeof(Msg));
 
             // -> 로그인 성공 이후
             // 클라이언트가 로그인 하기 전에도 입장 메시지가 나옴
             // 수정 필요
 
             // 채팅방 입장 메시지 전송
-            Msg msg;
-            msg = make_message(2, user->id, user->name, "");
+            msg = make_message(2, user->id, user->name, user->group, "");
             write(clients[client_idx].pipe1[WRITE_FD], &msg, sizeof(Msg));
             kill(getppid(), SIGUSR1);
 
-            EnterChatRoom(csock);
+            EnterChatRoom(csock, user->group);
 
             // read socket & write pipe
             while (true) {
@@ -204,35 +212,91 @@ int main(int argc, char **argv) {
                 if (read(clients[client_idx].sockfd, buf, sizeof(buf)) > 0) {
                     printf("child: %s\n", buf);
 
+                    if (!strncmp(buf, "!help", 5)) {
+                        ServerSend(csock, "----------------------------------------------------------\n");
+                        ServerSend(csock, " '!help'                     : show help message \n");
+                        ServerSend(csock, " '!exit', '!quit', '!q'      : close connection and exit \n");
+                        ServerSend(csock, " '!list', '!users'           : show user list \n");
+                        ServerSend(csock, " '!group [number]'           : change group \n");
+                        ServerSend(csock, " '!whisper [id] [message]'   : whisper to user \n");
+                        ServerSend(csock, " '@ [id] [message]'          : whisper to user \n");
+                        ServerSend(csock, "----------------------------------------------------------\n");
+
+                        continue;
+                    }
+
                     if (!strncmp(buf, "!exit", 5) || !strncmp(buf, "!quit", 5) || !strncmp(buf, "!q", 2)) {
-                        // 퇴장 메시지 전송
-                        msg = make_message(3, user->id, user->name, "");
+                        // 퇴장 메시지 broadcast
+                        msg = make_message(3, user->id, user->name, user->group, "");
                         write(clients[client_idx].pipe1[WRITE_FD], &msg, sizeof(Msg));
                         kill(getppid(), SIGUSR1);
 
                         // 종료 메시지 전송
-                        msg = make_message(-1, "", "", "");
+                        msg = make_message(-1, "", "", 0, "");
                         write(clients[client_idx].sockfd, &msg, sizeof(Msg));
                         break;
                     }
 
-                    if (!strncmp(buf, "!help", 5)) {
-                        ServerSend(csock, "=======================================\n");
-                        ServerSend(csock, "         .        \n");
-                        ServerSend(csock, "=======================================\n");
-
-                        continue;
-                    }
-
                     if (!strncmp(buf, "!list", 5) || !strncmp(buf, "!users", 6)) {
-                        msg = make_message(4, user->id, user->name, "");
+                        msg = make_message(4, user->id, user->name, user->group, "");
                         write(clients[client_idx].pipe1[WRITE_FD], &msg, sizeof(Msg));
                         kill(getppid(), SIGUSR1);
                         continue;
                     }
 
+                    if (!strncmp(buf, "!group", 6)) {
+                        char *ptr = strtok(buf, " ");
+                        char *group = strtok(NULL, "");
+
+                        if (group == NULL) {
+                            ServerSend(csock, "Invalid input\n");
+                            sleep(1);
+                            continue;
+                        }
+                        
+                        // 기존 그룹 퇴장 메시지 broadcast
+                        msg = make_message(3, user->id, user->name, user->group, "");
+                        write(clients[client_idx].pipe1[WRITE_FD], &msg, sizeof(Msg));
+                        kill(getppid(), SIGUSR1);
+
+                        // 새로운 그룹으로 변경
+                        user->group = atoi(group);
+                        
+                        // 유저 정보 전송
+                        msg = make_message(7, user->id, user->name, user->group, "");
+                        write(csock, &msg, sizeof(Msg));
+
+                        EnterChatRoom(csock, user->group);
+
+                        // 새로운 그룹 입장 메시지 broadcast
+                        msg = make_message(2, user->id, user->name, user->group, "");
+                        write(clients[client_idx].pipe1[WRITE_FD], &msg, sizeof(Msg));
+                        kill(getppid(), SIGUSR1);
+                        
+                        // 그룹 바뀌는데 클라이언트 입력이 밀림..
+
+                        continue;
+                    }
+
+                    if (!strncmp(buf, "!whisper", 8) || buf[0] == '@') {
+                        char *ptr = strtok(buf, " ");
+                        char *id = strtok(NULL, " ");
+                        char *message = strtok(NULL, "");
+
+                        if (id == NULL || message == NULL) {
+                            ServerSend(csock, "Invalid input\n");
+                            sleep(1);
+                            continue;
+                        }
+
+                        msg = make_message(6, user->id, user->name, user->group, message);
+                        // write(clients[client_idx].pipe1[WRITE_FD], &msg, sizeof(Msg));
+                        // kill(getppid(), SIGUSR1);
+                        continue;
+                    }
+
                     // 일반 메시지 처리
-                    msg = make_message(1, user->id, user->name, buf);
+                    msg = make_message(1, user->id, user->name, user->group, buf);
                     write(clients[client_idx].pipe1[WRITE_FD], &msg, sizeof(Msg));
                     kill(getppid(), SIGUSR1);
                 }
@@ -251,7 +315,7 @@ int main(int argc, char **argv) {
     }
 
 CLOSE:;
-    Msg msg = make_message(-1, "", "", "");
+    Msg msg = make_message(-1, "", "", -1, "");
     for (int i = 0; i < MAX_CLIENT; i++) {
         if (clients[i].sockfd != 0) {
             write(clients[i].pipe1[WRITE_FD], &msg, sizeof(Msg));
@@ -299,8 +363,9 @@ void siguser1(int signo) {
         }
     }
 
+    // list 메시지 전송
     if (buf[0] != 0) {
-        list_msg = make_message(5, list_msg.id, list_msg.name, buf);
+        list_msg = make_message(5, list_msg.id, list_msg.name, list_msg.group, buf);
         for (int i = 0; i < MAX_CLIENT; i++) {
             if (clients[i].sockfd != 0) {
                 write(clients[i].pipe2[WRITE_FD], &list_msg, sizeof(Msg));
@@ -376,18 +441,19 @@ void sigchild(int signo) {
 }
 
 // 메시지 생성 함수
-Msg make_message(const int code, const char *id, const char *name, const char *buf) {
+Msg make_message(const int code, const char *id, const char *name, const int group, const char *buf) {
     Msg msg;
     msg.code = code;
     strcpy(msg.id, id);
     strcpy(msg.name, name);
     strcpy(msg.buf, buf);
+    msg.group = group;
     return msg;
 }
 
 // 서버에서 클라이언트로 메시지 전송
 int ServerSend(int sockfd, const char *buf) {
-    Msg msg = make_message(0, "", "", buf);
+    Msg msg = make_message(0, "", "", 0, buf);
     return write(sockfd, &msg, sizeof(Msg));
 }
 
@@ -526,10 +592,13 @@ bool Resgister(int sockfd, sem_t *sem, User *user) {
     return true;
 }
 
-void EnterChatRoom(int sockfd) {
+void EnterChatRoom(int sockfd, int group) {
+    char buf[BUFSIZ];
+    sprintf(buf, "   Welcome to chat server (group %d)   \n", group);
+
     ServerSend(sockfd, "\033[2J\033[1;1H");
     ServerSend(sockfd, "=======================================\n");
-    ServerSend(sockfd, "         Welcome to chat server        \n");
+    ServerSend(sockfd, buf);
     ServerSend(sockfd, "=======================================\n");
     ServerSend(sockfd, "         Type '!exit' to exit          \n");
     ServerSend(sockfd, "   Type '!help' to get more commands   \n");
