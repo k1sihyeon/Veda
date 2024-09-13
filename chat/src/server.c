@@ -12,12 +12,12 @@
 #include <unistd.h>
 
 #define TCP_PORT    5100
-#define MAX_CLIENT  10
+#define MAX_CLIENT  100
 
 #define READ_FD     0
 #define WRITE_FD    1
 
-#define LOGIN_FILE_DIR "/home/sihyeon/workspace/veda/chat/data/login.csv"
+#define LOGIN_FILE_DIR "../data/login.csv"
 
 #define DISCON_SERVER_CODE  -1
 #define SERVER_MSG_CODE     0
