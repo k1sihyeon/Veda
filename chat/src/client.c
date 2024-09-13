@@ -106,7 +106,7 @@ int main(int argc, char** argv) {
             }
 
             if (msg.code == DISCON_SERVER_CODE) {   // 서버 종료
-                printf("=====  Disconnected from server  =====\n");
+                printf("===============  Disconnected from server  ===============\n");
                 break;
             }
             else if (msg.code == SERVER_MSG_CODE) {    // 서버가 직접 보낸 메시지
@@ -118,11 +118,11 @@ int main(int argc, char** argv) {
             }
             else if (msg.code == ENTER_MSG_CODE) {   // 채팅방 입장
                 if (msg.group == user.group)
-                    printf("%s[%s] entered the chat room\n", msg.name, msg.id);
+                    printf("\033[31;47m%s[%s] entered the chat room\033[0m\n", msg.name, msg.id);
             }
             else if (msg.code == EXIT_MSG_CODE) {   // 채팅방 퇴장
                 if (msg.group == user.group)
-                    printf("%s[%s] left the chat room\n", msg.name, msg.id);
+                    printf("\033[34;47m%s[%s] left the chat room\033[0m\n", msg.name, msg.id);
             }
             // else if (msg.code == LIST_MSG_CODE) {   // 사용자 리스트 - 서버 내부 처리용
             //     printf("======== client list ========\n");
@@ -131,14 +131,14 @@ int main(int argc, char** argv) {
             // }
             else if (msg.code == LIST_MSG_CODE2) {   // 사용자 리스트 - 클라이언트 출력용
                 if (msg.group == user.group) {
-                    printf("======== client list ========\n");
+                    printf("------------------     client list     -------------------\n");
                     printf("%s", msg.buf);
-                    printf("=============================\n");
+                    printf("----------------------------------------------------------\n");
                 }
             }
             else if (msg.code == WHISPER_MSG_CODE) {   // 귓속말
                 if (strcmp(msg.destID, user.id) == 0)
-                    printf("%s[%s] whispers to me : %s", msg.name, msg.id, msg.buf);
+                    printf("\033[1;32m%s[%s] whispers to me : %s\033[0m", msg.name, msg.id, msg.buf);
             }
             else if (msg.code == USER_INFO_CODE) {   // user 설정 코드
                 strcpy(user.id, msg.id);
@@ -150,8 +150,10 @@ int main(int argc, char** argv) {
 
                 FILE* file = fopen(msg.buf, "rb");
                 if (file == NULL) {
-                    printf("file open error\n");
-                    continue;;
+                    printf("file open error in client\n");
+                    fflush(stdin);
+                    fflush(stdout);
+                    continue;
                 }
 
                 Msg fmsg;

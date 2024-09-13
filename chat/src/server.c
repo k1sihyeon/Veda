@@ -182,13 +182,22 @@ int main(int argc, char **argv) {
             while (true) {
                 out = HelloWorld(clients[client_idx].sockfd, sem, user);
                 if (out == -1) {
+                    Msg emsg = make_message(DISCON_SERVER_CODE, "", "", 0, "");
+                    write(csock, &emsg, sizeof(Msg));
                     close_client(client_idx);
+                    printf("client disconnected\n");
                     goto CLOSE;
                     break;
                 }
 
                 if (out == true) {
+                    //printf("login success\n");
                     break;
+                }
+
+                if (out == false) {
+                    //printf("login failed\n");
+                    continue;
                 }
             }
 
@@ -227,14 +236,18 @@ int main(int argc, char **argv) {
                 if (read(clients[client_idx].sockfd, buf, sizeof(buf)) > 0) {
                     printf("child: %s\n", buf);
 
+                    // !help
                     if (!strncmp(buf, "!help", 5)) {
                         ServerSend(csock, "----------------------------------------------------------\n");
                         ServerSend(csock, " '!help'                     : show help message \n");
                         ServerSend(csock, " '!exit', '!quit', '!q'      : close connection and exit \n");
                         ServerSend(csock, " '!list', '!users'           : show user list \n");
                         ServerSend(csock, " '!group [number]'           : change group \n");
+                        ServerSend(csock, " '!announce [message]'       : send announcement \n");
                         ServerSend(csock, " '!whisper [id] [message]'   : whisper to user \n");
                         ServerSend(csock, " '@ [id] [message]'          : whisper to user \n");
+                        ServerSend(csock, " '!color [color] [message]'  : change text color \n");
+                        ServerSend(csock, "         [color]             : 30 ~ 37 \n");
                         ServerSend(csock, " '!send [filename]           : send file to server\n");
                         ServerSend(csock, " '!recv [filename]           : receive file from server\n");
                         ServerSend(csock, " '!clear', '!cls'            : clear screen \n");
@@ -243,6 +256,7 @@ int main(int argc, char **argv) {
                         continue;
                     }
 
+                    // !exit, !quit, !q
                     if (!strncmp(buf, "!exit", 5) || !strncmp(buf, "!quit", 5) || !strncmp(buf, "!q", 2)) {
                         // 퇴장 메시지 broadcast
                         msg = make_message(3, user->id, user->name, user->group, "");
@@ -255,6 +269,7 @@ int main(int argc, char **argv) {
                         break;
                     }
 
+                    // !list, !users
                     if (!strncmp(buf, "!list", 5) || !strncmp(buf, "!users", 6)) {
                         msg = make_message(LIST_MSG_CODE, user->id, user->name, user->group, "");
                         write(clients[client_idx].pipe1[WRITE_FD], &msg, sizeof(Msg));
@@ -262,6 +277,7 @@ int main(int argc, char **argv) {
                         continue;
                     }
 
+                    // !group
                     if (!strncmp(buf, "!group", 6)) {
                         char *ptr = strtok(buf, " ");
                         char *group = strtok(NULL, "");
@@ -296,6 +312,28 @@ int main(int argc, char **argv) {
                         continue;
                     }
 
+                    // !announce
+                    if (!strncmp(buf, "!announce", 9)) {
+                        char *ptr = strtok(buf, " ");
+                        char *message = strtok(NULL, "");
+
+                        if (message == NULL) {
+                            ServerSend(csock, "Invalid input\n");
+                            sleep(1);
+                            continue;
+                        }
+
+                        char abuf[BUFSIZ];
+                        sprintf(abuf, "\033[1;33m[Announcement] %s\033[0m", message);
+
+                        msg = make_message(SERVER_MSG_CODE, "", "", "", abuf);
+                        write(clients[client_idx].pipe1[WRITE_FD], &msg, sizeof(Msg));
+                        kill(getppid(), SIGUSR1);
+                        
+                        continue;
+                    }
+                    
+                    // !whisper, @
                     if (!strncmp(buf, "!whisper", 8) || buf[0] == '@') {
                         char *ptr = strtok(buf, " ");
                         char *id = strtok(NULL, " ");
@@ -315,6 +353,29 @@ int main(int argc, char **argv) {
                         continue;
                     }
 
+                    // !color
+                    if (!strncmp(buf, "!color", 6)) {
+                        // color change
+                        char *ptr = strtok(buf, " ");
+                        char *color = strtok(NULL, " ");
+                        char *message = strtok(NULL, "");
+
+                        if (color == NULL || message == NULL) {
+                            ServerSend(csock, "Invalid input\n");
+                            sleep(1);
+                            continue;
+                        }
+
+                        char color_buf[BUFSIZ];
+                        sprintf(color_buf, "\033[1;%sm%s\033[0m", color, message);
+                        msg = make_message(CLIENT_MSG_CODE, user->id, user->name, user->group, color_buf);
+                        write(clients[client_idx].pipe1[WRITE_FD], &msg, sizeof(Msg));
+                        kill(getppid(), SIGUSR1);
+                        
+                        continue;
+                    }
+
+                    // !send
                     if (!strncmp(buf, "!send", 5)) {
                         // 클라이언트에서 파일 전송 -> 서버에서 파일 수신
                         char *ptr = strtok(buf, " ");
@@ -337,7 +398,8 @@ int main(int argc, char **argv) {
 
                         FILE *file = fopen(filename, "wb");
                         if (file == NULL) {
-                            printf("file open error\n");
+                            printf("file open error in server\n");
+                            sleep(1);
                             continue;
                         }
 
@@ -360,6 +422,7 @@ int main(int argc, char **argv) {
                         continue;
                     }
 
+                    // !recv
                     if (!strncmp(buf, "!recv", 5)) {
                         // 서버에서 파일 전송 -> 클라이언트에서 파일 수신
                         char *ptr = strtok(buf, " ");
@@ -377,7 +440,7 @@ int main(int argc, char **argv) {
                         // 파일 청크 단위 전송
                         FILE *file = fopen(filename, "rb");
                         if (file == NULL) {
-                            perror("file open error (recv)");
+                            perror("file open error (recv in server)");
                             continue;
                         }
 
@@ -407,6 +470,7 @@ int main(int argc, char **argv) {
                         continue;
                     }
 
+                    // !clear, !cls
                     if (!strncmp(buf, "!clear", 6) || !strncmp(buf, "!cls", 4)) {
                         ServerSend(csock, "\033[2J\033[1;1H");
                         continue;
@@ -469,7 +533,6 @@ void siguser1(int signo) {
                         kill(clients[j].child_pid, SIGUSR2);
                     }
                 }
-
                 return;
             }
 
@@ -528,8 +591,6 @@ void siguser2(int signo) {
                 break;
             }
             //break;
-
-
         }
     }
 }
@@ -577,22 +638,24 @@ int HelloWorld(int sockfd, sem_t *sem, User *user) {
     char buf[BUFSIZ];
 
     ServerSend(sockfd, "\033[2J\033[1;1H");
-    ServerSend(sockfd, "         Welcome to chat server        \n");
-    ServerSend(sockfd, "=======================================\n");
-    ServerSend(sockfd, "              Select Menu              \n");
-    ServerSend(sockfd, "=======================================\n");
-    ServerSend(sockfd, "1. Login\n");
-    ServerSend(sockfd, "2. Register\n");
-    ServerSend(sockfd, "3. Exit\n");
-    ServerSend(sockfd, "=======================================\n");
-    ServerSend(sockfd, "Input Number >> ");
+    ServerSend(sockfd, "                  Welcome to chat server                 \n");
+    ServerSend(sockfd, "==========================================================\n");
+    ServerSend(sockfd, "                        Select Menu                       \n");
+    ServerSend(sockfd, "==========================================================\n");
+    ServerSend(sockfd, "    1. Login\n");
+    ServerSend(sockfd, "    2. Register\n");
+    ServerSend(sockfd, "    3. Exit\n");
+    ServerSend(sockfd, "==========================================================\n");
+    ServerSend(sockfd, "    Input Number >> ");
 
     read(sockfd, buf, sizeof(buf));
     num = atoi(buf);
 
     if (num == 1) {
-        while(!Login(sockfd, sem, user)) {};
-        return true;
+        if (Login(sockfd, sem, user))
+            return true;
+        else
+            return false;
     }
     else if (num == 2) {
         while(!Resgister(sockfd, sem, user)) {};
@@ -634,6 +697,12 @@ bool Login(int sockfd, sem_t *sem, User *user) {
     // csv로 로그인 유효성 검사
     sem_wait(sem);
     csv_fp = fopen(LOGIN_FILE_DIR, "r");
+    if (csv_fp == NULL) {
+        ServerSend(sockfd, "Login File Does NOT exsit, DO REGISTER\n");
+        sleep(1);
+        return false;
+    }
+
     while (fgets(buf, BUFSIZ, csv_fp) != NULL) {
         sscanf(buf, "%[^,], %[^,], %s", fid, fpw, fname);
 
@@ -708,13 +777,13 @@ bool Resgister(int sockfd, sem_t *sem, User *user) {
 
 void EnterChatRoom(int sockfd, int group) {
     char buf[BUFSIZ];
-    sprintf(buf, "   Welcome to chat server (group %d)   \n", group);
+    sprintf(buf, "             Welcome to chat server (group %d)           \n", group);
 
     ServerSend(sockfd, "\033[2J\033[1;1H");
-    ServerSend(sockfd, "=======================================\n");
+    ServerSend(sockfd, "==========================================================\n");
     ServerSend(sockfd, buf);
-    ServerSend(sockfd, "=======================================\n");
-    ServerSend(sockfd, "         Type '!exit' to exit          \n");
-    ServerSend(sockfd, "   Type '!help' to get more commands   \n");
-    ServerSend(sockfd, "=======================================\n\n");
+    ServerSend(sockfd, "==========================================================\n");
+    ServerSend(sockfd, "                   Type '!exit' to exit                   \n");
+    ServerSend(sockfd, "            Type '!help' to get more commands             \n");
+    ServerSend(sockfd, "==========================================================\n\n");
 }
