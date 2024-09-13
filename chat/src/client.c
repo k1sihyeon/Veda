@@ -146,7 +146,7 @@ int main(int argc, char** argv) {
                 user.group = msg.group;
             }
             else if (msg.code == FILE_SEND_CODE) {   // 파일 전송
-                printf("send file(%s) to server\n", msg.name, msg.id, msg.buf);
+                printf("send file(%s) to server\n", msg.buf);
 
                 FILE* file = fopen(msg.buf, "rb");
                 if (file == NULL) {
@@ -193,15 +193,15 @@ int main(int argc, char** argv) {
 
                 int received_bytes = 0;
 
-                // 파일을 청크 단위로 수신
+                // 파일 수신
                 do {
-                    fwrite(msg.buf, 1, BUFSIZ, file);
-                    received_bytes += BUFSIZ;
-
-                    if (recv(ssock, &msg, sizeof(Msg), 0) <= 0) {
-                        perror("파일 수신 중 오류 발생");
+                    int nbytes = recv(ssock, &msg, sizeof(Msg), 0);
+                    if (nbytes <= 0) {
+                        perror("recv()");
                         break;
                     }
+                    fwrite(msg.buf, 1, nbytes, file);  // 실제 받은 바이트만큼 파일에 쓰기
+                    received_bytes += nbytes;
                 } while (received_bytes < msg.filesize);
 
                 fclose(file);

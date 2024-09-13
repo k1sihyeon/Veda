@@ -248,8 +248,8 @@ int main(int argc, char **argv) {
                         ServerSend(csock, " '@ [id] [message]'          : whisper to user \n");
                         ServerSend(csock, " '!color [color] [message]'  : change text color \n");
                         ServerSend(csock, "         [color]             : 30 ~ 37 \n");
-                        ServerSend(csock, " '!send [filename]           : send file to server\n");
-                        ServerSend(csock, " '!recv [filename]           : receive file from server\n");
+                        ServerSend(csock, " '!send [file1] [file2]      : send file to server\n");
+                        ServerSend(csock, " '!recv [file1] [file2]      : receive file from server\n");
                         ServerSend(csock, " '!clear', '!cls'            : clear screen \n");
                         ServerSend(csock, "----------------------------------------------------------\n");
 
@@ -379,24 +379,32 @@ int main(int argc, char **argv) {
                     if (!strncmp(buf, "!send", 5)) {
                         // 클라이언트에서 파일 전송 -> 서버에서 파일 수신
                         char *ptr = strtok(buf, " ");
-                        char *filename = strtok(NULL, "");
+                        char *file1 = strtok(NULL, " "); // in client
+                        char *file2 = strtok(NULL, ""); // in server
 
-                        if (filename == NULL) {
+                        if (file1 == NULL || file2 == NULL) {
                             ServerSend(csock, "Invalid input\n");
                             sleep(1);
                             continue;
                         }
 
-                        msg = make_message(FILE_SEND_CODE, user->id, user->name, user->group, filename);
+                        if (file1 != NULL) {
+                            file1[strcspn(file1, "\n")] = '\0';
+                        }
+                        if (file2 != NULL) {
+                            file2[strcspn(file2, "\n")] = '\0';
+                        }
+
+                        msg = make_message(FILE_SEND_CODE, user->id, user->name, user->group, file1);
                         write(csock, &msg, sizeof(Msg));
 
                         // 파일 청크 단위 수신
                         Msg fmsg;
                         memset(&fmsg, 0, sizeof(Msg));
-                        strcpy(fmsg.filename, filename);
+                        strcpy(fmsg.filename, file1);
                         fmsg.filesize = 0;
 
-                        FILE *file = fopen(filename, "wb");
+                        FILE *file = fopen(file2, "wb");
                         if (file == NULL) {
                             printf("file open error in server\n");
                             sleep(1);
@@ -405,19 +413,19 @@ int main(int argc, char **argv) {
 
                         int received_bytes = 0;
 
-                        // 파일을 청크 단위로 수신
+                        // 파일 수신
                         do {
-                            fwrite(msg.buf, 1, BUFSIZ, file);
-                            received_bytes += BUFSIZ;
-
-                            if (recv(csock, &msg, sizeof(Msg), 0) <= 0) {
+                            int nbytes = recv(csock, &msg, sizeof(Msg), 0);
+                            if (nbytes <= 0) {
                                 perror("recv()");
                                 break;
                             }
+                            fwrite(msg.buf, 1, nbytes, file);  // 실제 받은 바이트만큼 파일에 쓰기
+                            received_bytes += nbytes;
                         } while (received_bytes < msg.filesize);
 
                         fclose(file);
-                        printf("file received: %s\n", filename);
+                        printf("file received: %s\n", file1);
 
                         continue;
                     }
@@ -426,19 +434,27 @@ int main(int argc, char **argv) {
                     if (!strncmp(buf, "!recv", 5)) {
                         // 서버에서 파일 전송 -> 클라이언트에서 파일 수신
                         char *ptr = strtok(buf, " ");
-                        char *filename = strtok(NULL, "");
+                        char *file1 = strtok(NULL, " "); // in server
+                        char *file2 = strtok(NULL, ""); // in client
 
-                        if (filename == NULL) {
+                        if (file1 == NULL || file2 == NULL) {
                             ServerSend(csock, "Invalid input\n");
                             sleep(1);
                             continue;
                         }
 
-                        msg = make_message(FILE_RECV_CODE, user->id, user->name, user->group, filename);
+                        if (file1 != NULL) {
+                            file1[strcspn(file1, "\n")] = '\0';
+                        }
+                        if (file2 != NULL) {
+                            file2[strcspn(file2, "\n")] = '\0';
+                        }
+
+                        msg = make_message(FILE_RECV_CODE, user->id, user->name, user->group, file2);
                         write(csock, &msg, sizeof(Msg));
 
                         // 파일 청크 단위 전송
-                        FILE *file = fopen(filename, "rb");
+                        FILE *file = fopen(file1, "rb");
                         if (file == NULL) {
                             perror("file open error (recv in server)");
                             continue;
@@ -446,7 +462,7 @@ int main(int argc, char **argv) {
 
                         Msg fmsg;
                         memset(&fmsg, 0, sizeof(Msg));
-                        strcpy(fmsg.filename, filename);
+                        strcpy(fmsg.filename, file2);
                         
                         fseek(file, 0, SEEK_END);
                         fmsg.filesize = ftell(file);
