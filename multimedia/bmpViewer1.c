@@ -12,7 +12,7 @@
 
 #define FBDEVFILE   "/dev/fb0"
 
-#define LIMIT_UBYTE(n) (n>UCHAR_MAX)?UCHAR_MAX:(n<0)?0:n
+#define LIMIT_UBYTE(n) (n > UCHAR_MAX) ? UCHAR_MAX : (n < 0) ? 0 : n
 #define LIMIT_BYTE(n) (n>USHRT_MAX)?USHRT_MAX:(n<0)?0:n
 
 typedef unsigned char ubyte;

@@ -15,10 +15,10 @@ int main() {
     Point2f center(image1.cols/2., image1.rows/2);
     Mat rotMat = getRotationMatrix2D(center, angle, 1.0);
 
-    warpAffine(image1, image2, rotMat, image1.size());
-    flip(image1, image3, 0);
-    flip(image1, image4, 1);
-    transpose(image1, image5);
+    warpAffine(image1, image2, rotMat, image1.size());  // 회전
+    flip(image1, image3, 0);        // 상하 대칭
+    flip(image1, image4, 1);        // 좌우 대칭
+    transpose(image1, image5);      // 전치
 
     imshow("IMAGE", image1);
     imshow("warpAffine", image2);
