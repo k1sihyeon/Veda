@@ -97,7 +97,7 @@ int main(int argc, char** argv) {
         size_t remain = 960000;
 
         while (remain > 0) {
-            size_t to_receive = (remain < BUFSIZ) ? remain : BUFSIZ;
+            size_t to_receive = 960000 - total_received; //(remain < BUFSIZ) ? remain : BUFSIZ;
             //size_t received = recv(ssock, inimg + total_received, to_receive, 0);
             size_t received = read(ssock, inimg + total_received, to_receive);
 

@@ -61,20 +61,20 @@ static void mesg_exit(const char *s) {
 static void process_image(int csock, const void* p) {
     struct buffer* inbuff = (struct buffer*) p;
 
-	size_t chunk = BUFSIZ;
+	//size_t chunk = BUFSIZ;
 	size_t remain = inbuff->length;
 	size_t total_sent = 0;
-	size_t sent;
+	size_t sent = 0;
 	unsigned char* data = (unsigned char *)(inbuff->start);
 
 	std::cout << "buf->length : " << inbuff->length << "\n";
 
 	while (remain > 0) {
-		size_t to_send = (remain < chunk) ? remain : chunk;
+		size_t to_send = inbuff->length - sent;
 
-		std::cout << "left : " << remain << "\n";
+		//std::cout << "left : " << remain << "\n";
 
-		if ((sent = write(csock, data + total_sent, to_send)) == -1) {
+		if ((sent = write(csock, data + total_sent, to_send)) <= 0) {
 			perror("Error : write()");
 			break;
 		}
