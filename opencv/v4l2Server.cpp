@@ -1,5 +1,6 @@
 #include <fcntl.h>
 
+#include <iostream>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -29,8 +30,9 @@
 #define PORT 	5100
 #define MAX_CLIENT 10
 
+
 struct buffer {
-    void* start;
+    void* start;		// 아마 struct v4l2_buffer?
     size_t length;
 };
 
@@ -57,9 +59,30 @@ static void mesg_exit(const char *s) {
 
 // 이 함수로 전송하면 될 듯????
 static void process_image(int csock, const void* p) {
-    unsigned char* in = (unsigned char*) p;
+    struct buffer* inbuff = (struct buffer*) p;
+
+	size_t chunk = BUFSIZ;
+	size_t remain = inbuff->length;
+	size_t total_sent = 0;
+	size_t sent;
+	unsigned char* data = (unsigned char *)(inbuff->start);
+
+	std::cout << "buf->length : " << inbuff->length << "\n";
+
+	while (remain > 0) {
+		size_t to_send = (remain < chunk) ? remain : chunk;
+
+		std::cout << "left : " << remain << "\n";
+
+		if ((sent = write(csock, data + total_sent, to_send)) == -1) {
+			perror("Error : write()");
+			break;
+		}
+
+		total_sent += sent;
+		remain -= sent;
+	}
     
-	write(csock, in, sizeof(in));
 }
 
 static int read_frame(int csock, int fd) {
@@ -77,7 +100,7 @@ static int read_frame(int csock, int fd) {
 		}
 	}
 
-	process_image(csock, buffers[buf.index].start);
+	process_image(csock, &buffers[buf.index]);
 
 	if(-1 == xioctl(fd, VIDIOC_QBUF, &buf))
 	        mesg_exit("VIDIOC_QBUF");
@@ -87,6 +110,8 @@ static int read_frame(int csock, int fd) {
 
 static void mainloop(int csock, int fd) {
 	//unsigned int count = 100;
+
+	printf("mainloop entered!!!\n");
 
 	while(true) {
 		for (;;) {
@@ -281,13 +306,31 @@ int main(int argc, char** argv) {
 		
 		csock = accept(ssock, (struct sockaddr *)&cliaddr, &clen);
 
+		printf("client connected!!\n");
+
 		//fork
 		if ((pid = fork()) < 0)
 			perror("fork()");
 		// in child proc.
 		else if (pid == 0) {
-			mainloop(csock, camfd);
-		}
+            mainloop(csock, camfd);
+
+            enum v4l2_buf_type type;
+            type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+
+            if (-1 == xioctl(camfd, VIDIOC_STREAMOFF, &type))
+                mesg_exit("VIDIOC_STREAMOFF");
+
+            /* 메모리 정리 */
+            for (int i = 0; i < n_buffers; ++i)
+                if (-1 == munmap(buffers[i].start, buffers[i].length))
+                    mesg_exit("munmap");
+			
+			free(buffers);
+			close(camfd);
+
+			exit(0);
+        }
 	}
 
 	return 0;
