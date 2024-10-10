@@ -37,7 +37,7 @@ struct buffer {
 
 static int csock;
 
-struct buffer *buffers = NULL
+struct buffer *buffers = NULL;
 static unsigned int n_buffers = 0;  // 한번에 받아온 (req.size) 버퍼 개수
 static struct fb_var_screeninfo vinfo;
 
@@ -146,17 +146,17 @@ int main(int argc, char** argv) {
     format.fmt.pix.pixelformat = V4L2_PIX_FMT_YUYV;
     format.fmt.pix.field = V4L2_FIELD_NONE;
 
-    if (xioctl(camfd, VIDIOC_S_FMT, &fmt) == -1) 
+    if (xioctl(camfd, VIDIOC_S_FMT, &format) == -1) 
         mesg_exit("VIDEO_S_FMT");
 
     // 아마 드라이버 오류 처리??
-    min = fmt.fmt.pix.width * 2;
-    if (fmt.fmt.pix.bytesperline < min)
-        fmt.fmt.pix.bytesperline = min;
+    min = format.fmt.pix.width * 2;
+    if (format.fmt.pix.bytesperline < min)
+        format.fmt.pix.bytesperline = min;
 
-    min = fmt.fmt.pix.bytesperline * fmt.fmt.pix.height;
-    if (fmt.fmt.pix.sizeimage < min)
-        fmt.fmt.pix.sizeimage = min;
+    min = format.fmt.pix.bytesperline * format.fmt.pix.height;
+    if (format.fmt.pix.sizeimage < min)
+        format.fmt.pix.sizeimage = min;
     
     //////////////////////////////
     // 버퍼 요청 - init_mmap
@@ -168,7 +168,7 @@ int main(int argc, char** argv) {
 
     // 버퍼 요청 - VIDIOC_REQBUFS
     if (xioctl(camfd, VIDIOC_REQBUFS, &req) == -1) {
-        if (EINCAL == errno) {
+        if (EINVAL == errno) {
             fprintf(stderr, "%s does not support memory mapping\n", VIDEODEV);
 			exit(EXIT_FAILURE);
         }
@@ -205,7 +205,7 @@ int main(int argc, char** argv) {
         
         // 배열 삽입 : 버퍼를 유저공간에 mapping
         buffers[n_buffers].length = buf.length;
-        buffers[n_buffers].start = mmap(NULL, buf.length, PROT_READ | PROT_WRITE, MAP_SHARED, cmafd, buf.m.offset);
+        buffers[n_buffers].start = mmap(NULL, buf.length, PROT_READ | PROT_WRITE, MAP_SHARED, camfd, buf.m.offset);
 
         // 배열 삽입 오류 처리
         if (buffers[n_buffers].start == MAP_FAILED)
@@ -236,38 +236,44 @@ int main(int argc, char** argv) {
             mesg_exit("VIDIOC_QBUF");
     }
 
+    enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+
     // 스트림 켜기
     if (xioctl(camfd, VIDIOC_STREAMON, &type))
         mesg_exit("VIDIOC_STREAMON");
     
+    while(true) {
+        read_frame(camfd);
+    }
+
     /////////////////////
     // mainloop - polling wait
-    while(true) {
-        while(true) {
-            fd_set fds;
-            struct timval tv;
-            FD_ZERO(&fds);
-            FD_SET(camfd, &fds);
+    // while(true) {
+    //     while(true) {
+    //         fd_set fds;
+    //         struct timeval tv;
+    //         FD_ZERO(&fds);
+    //         FD_SET(camfd, &fds);
 
-            tv.tv_sec = 2;
-            tv.tv_usec = 0;
+    //         tv.tv_sec = 2;
+    //         tv.tv_usec = 0;
 
-            int r = select(camfd + 1, &fds, NULL, NULL, &tv);
-            if(r == -1) {
-				if(EINTR == errno) 
-                    continue;
-				mesg_exit("select");
-			}
-            else if(r == 0) {
-				fprintf(stderr, "select timeout\n");
-				exit(EXIT_FAILURE);
-			}
+    //         int r = select(camfd + 1, &fds, NULL, NULL, &tv);
+    //         if(r == -1) {
+	// 			if(EINTR == errno) 
+    //                 continue;
+	// 			mesg_exit("select");
+	// 		}
+    //         else if(r == 0) {
+	// 			fprintf(stderr, "select timeout\n");
+	// 			exit(EXIT_FAILURE);
+	// 		}
 
-            // polling으로 읽을 프레임이 있을 때만 읽음
-            if (read_frame(camfd))
-                break;
-        }
-    }
+    //         // polling으로 읽을 프레임이 있을 때만 읽음
+    //         if (read_frame(camfd))
+    //             break;
+    //     }
+    // }
 
     return 0;
 }
@@ -297,12 +303,16 @@ static int read_frame(int fd) {
 		}
     }
 
+    std::cout << "buf.length: " << buf.length << ", buf.bytesused: " << buf.bytesused << "\n";
+
     // index로 프레임 접근
-    send_image(buffers[buf.index]);
+    send_image(&(buffers[buf.index]));
 
     // 다시 VIDIOC_QBUF로 프레임 요청
     if (xioctl(fd, VIDIOC_QBUF, &buf))
         mesg_exit("VIDIOC_QBUF");
+
+    std::cout << "re-request frame" << "\n";
 
     return 1;
 }
@@ -311,15 +321,16 @@ static void send_image(const void* p) {
     struct buffer* inbuff = (struct buffer*) p;
 
 	//size_t chunk = BUFSIZ;
-	size_t remain = inbuff->length;
-	size_t total_sent = 0;
-	size_t sent = 0;
+	int remain = inbuff->length;
+	int total_sent = 0;
+	int sent = 0;
+
 	unsigned char* data = (unsigned char *)(inbuff->start);
 
-	std::cout << "buf->length : " << inbuff->length << "\n";
+    std::cout << "buf->length : " << inbuff->length << ", sizeof(buf->start): " << sizeof(&(inbuff->start)) << "\n";
 
 	while (remain > 0) {
-		size_t to_send = inbuff->length - sent;
+		int to_send = inbuff->length - sent;
 
 		//std::cout << "left : " << remain << "\n";
 
@@ -328,7 +339,11 @@ static void send_image(const void* p) {
 			break;
 		}
 
+        std::cout << "sent: " << sent << ", sizeof(sent): " << sizeof(sent) << "\n";
+
 		total_sent += sent;
 		remain -= sent;
 	}
+
+    std::cout << "send_image done!" << "\n";
 }

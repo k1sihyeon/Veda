@@ -21,6 +21,8 @@
 
 #define FBDEV   "/dev/fb0"
 
+#define TOTAL   960000
+
 #define PORT    5100
 #define WIDTH   800
 #define HEIGHT  600
@@ -85,28 +87,27 @@ int main(int argc, char** argv) {
         return EXIT_FAILURE;
     }
 
-    memset(fbp, 0, screensize);
-
     printf("I'm going to read img!\n");
 
     while (true) {
+        memset(fbp, 0, screensize);
 
         unsigned char* inimg;
 
-        size_t total_received = 0;
-        size_t remain = 960000;
+        int total_received = 0;
+        int remain = TOTAL;
 
         while (remain > 0) {
-            size_t to_receive = 960000 - total_received; //(remain < BUFSIZ) ? remain : BUFSIZ;
+            int to_receive = TOTAL - total_received; //(remain < BUFSIZ) ? remain : BUFSIZ;
+            
             //size_t received = recv(ssock, inimg + total_received, to_receive, 0);
-            size_t received = read(ssock, inimg + total_received, to_receive);
-
-            //printf("left : %d\n", remain);
-
+            int received = read(ssock, inimg + total_received, to_receive);
             if (received <= 0) {
-                perror("Error : recv()");
-                break;
+                perror("Error : read()");
+                return EXIT_FAILURE;
             }
+
+            std::cout << "received: " << received << ", remain: " << remain << ", total_received: " << total_received << ", to_receive: " << to_receive <<"\n";
 
             total_received += received;
             remain -= received;
@@ -158,6 +159,8 @@ int main(int argc, char** argv) {
             };
             inimg += istride;
         };
+
+        std::cout << "image print done!!\n";
     }
 
     munmap(fbp, screensize);

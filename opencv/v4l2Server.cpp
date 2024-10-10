@@ -109,30 +109,32 @@ static int read_frame(int csock, int fd) {
 }
 
 static void mainloop(int csock, int fd) {
-	//unsigned int count = 100;
+    // unsigned int count = 100;
 
-	printf("mainloop entered!!!\n");
+    printf("mainloop entered!!!\n");
 
-	while(true) {
-		for (;;) {
-			fd_set fds;
-			struct timeval tv;
-			FD_ZERO(&fds);
-			FD_SET(fd, &fds);
-			/* Timeout. */
-			tv.tv_sec = 2;
-			tv.tv_usec = 0;
-			int r = select(fd + 1, &fds, NULL, NULL, &tv);
-			if(-1 == r) {
-				if(EINTR == errno) continue;
-				mesg_exit("select");
-			} else if(0 == r) {
-				fprintf(stderr, "select timeout\n");
-				exit(EXIT_FAILURE);
-			}
-			if(read_frame(csock, fd)) break;
-		}
-	}
+    while (true) {
+        // read_frame(csock, fd);
+        for (;;) {
+            fd_set fds;
+            struct timeval tv;
+            FD_ZERO(&fds);
+            FD_SET(fd, &fds);
+            /* Timeout. */
+            tv.tv_sec = 2;
+            tv.tv_usec = 0;
+            int r = select(fd + 1, &fds, NULL, NULL, &tv);
+            if (-1 == r) {
+                if (EINTR == errno) continue;
+                mesg_exit("select");
+            }
+            else if (0 == r) {
+                fprintf(stderr, "select timeout\n");
+                exit(EXIT_FAILURE);
+            }
+            if (read_frame(csock, fd)) break;
+        }
+    }
 }
 
 static void init_mmap(int fd) {
@@ -163,20 +165,20 @@ static void init_mmap(int fd) {
 		exit(EXIT_FAILURE);
 	}
 
-	for (n_buffers = 0; n_buffers < req.count; ++n_buffers) {
-		struct v4l2_buffer buf;
-		memset(&buf, 0, sizeof(buf));
-		buf.type        = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-		buf.memory      = V4L2_MEMORY_MMAP;
-		buf.index       = n_buffers;
-		if(-1 == xioctl(fd, VIDIOC_QUERYBUF, &buf))
-		            mesg_exit("VIDIOC_QUERYBUF");
-		buffers[n_buffers].length = buf.length;
-		buffers[n_buffers].start = mmap(NULL, buf.length, PROT_READ | PROT_WRITE,
-		                                        MAP_SHARED, fd, buf.m.offset);
-		if(MAP_FAILED == buffers[n_buffers].start)
-		            mesg_exit("mmap");
-	}
+    for (n_buffers = 0; n_buffers < req.count; ++n_buffers) {
+        struct v4l2_buffer buf;
+        memset(&buf, 0, sizeof(buf));
+        buf.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+        buf.memory = V4L2_MEMORY_MMAP;
+        buf.index = n_buffers;
+        if (-1 == xioctl(fd, VIDIOC_QUERYBUF, &buf))
+            mesg_exit("VIDIOC_QUERYBUF");
+        buffers[n_buffers].length = buf.length;
+        buffers[n_buffers].start = mmap(NULL, buf.length, PROT_READ | PROT_WRITE,
+                                        MAP_SHARED, fd, buf.m.offset);
+        if (MAP_FAILED == buffers[n_buffers].start)
+            mesg_exit("mmap");
+    }
 }
 
 static void init_device(int fd) {
