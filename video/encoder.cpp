@@ -1,91 +1,51 @@
-#include <fcntl.h>
-
 #include <iostream>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
-/* low-level i/o */
-#include <asm/types.h>
+#include <unistd.h>
+#include <fcntl.h>
+#include <signal.h>
 #include <errno.h>
-#include <linux/fb.h>
-#include <malloc.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
-#include <sys/stat.h>
-#include <sys/time.h>
-#include <sys/types.h>
-#include <unistd.h>
-
-#include <sys/socket.h>
-#include <arpa/inet.h>
-
-/* for videodev2.h */
+#include <linux/fb.h>
 #include <linux/videodev2.h>
 
-#define VIDEODEV "/dev/video0"
+#define VIDEO_DEV "/dev/video0"
 #define WIDTH 	800
 #define HEIGHT 	600
 
-#define PORT 	    5100
-#define MAX_CLIENT  10
+typedef unsigned char uchar;
+
+struct buffer *buffers = NULL;
+static unsigned int n_buffers = 0;  // 한번에 받아온 (req.size) 버퍼 개수
+static struct fb_var_screeninfo vinfo;
+static int cond = 1;
 
 struct buffer {
     void* start;
     size_t length;
 };
 
-static int csock;
-
-struct buffer *buffers = NULL;
-static unsigned int n_buffers = 0;  // 한번에 받아온 (req.size) 버퍼 개수
-static struct fb_var_screeninfo vinfo;
-
-static int xioctl(int fd, int request, void* arg);
-
-extern inline int clip(int value, int min, int max) {
+static inline int clip(int value, int min, int max) {
     return (value > max ? max : value < min ? min : value);
 }
 
-static void mesg_exit(const char *s) {
-	fprintf(stderr, "%s error %d, %s\n", s, errno, strerror(errno));
-	exit(EXIT_FAILURE);
+static void sigHandler(int signo) {
+    cond = 0;
 }
 
 static int read_frame(int fd);
-static void send_image(const void* p);
+static void process_image(const void* p);
+
+void yuyv2rgb565(uchar* yuyv, ushort* rgb, int width, int height);
+int initFramebuffer(ushort** fbPtr, int* size);
+static int init_v4l2(int* fd, struct buffer* buffers);
 
 int main(int argc, char** argv) {
 
-    pid_t pid;
-    struct sockaddr_in servaddr, cliaddr;
-    int ssock, port = PORT;
     int camfd = -1;
-
-    /////////////////////////////////
-    // 서버 등록
-    if (argc == 2)
-		port = atoi(argv[1]);
-	
-	if ((ssock = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-		perror("socket()");
-		return EXIT_FAILURE;
-	}
-
-	memset(&servaddr, 0, sizeof(servaddr));
-	servaddr.sin_family = AF_INET;
-	servaddr.sin_addr.s_addr = htonl(INADDR_ANY);
-	servaddr.sin_port = htons(port);
-
-	if (bind(ssock, (struct sockaddr *)&servaddr, sizeof(servaddr)) < 0) {
-		perror("bind()");
-		return EXIT_FAILURE;
-	}
-
-	if (listen(ssock, MAX_CLIENT) < 0) {
-		perror("listen()");
-		return EXIT_FAILURE;
-	}
 
     ///////////////////////////
     // initdevice
@@ -211,16 +171,6 @@ int main(int argc, char** argv) {
         if (buffers[n_buffers].start == MAP_FAILED)
             mesg_exit("mmap");
     }
-    /////////////////////////////
-    // accept client
-    printf("cam settings done!\n");
-
-    char mesg[BUFSIZ];
-    socklen_t clen = sizeof(cliaddr);	
-	
-    csock = accept(ssock, (struct sockaddr *)&cliaddr, &clen);
-    inet_ntop(AF_INET, &cliaddr.sin_addr, mesg, BUFSIZ);
-    printf("Client is connected : %s\n", mesg);
 
     ////////////////////////////
     // start capturing
@@ -242,38 +192,38 @@ int main(int argc, char** argv) {
     if (xioctl(camfd, VIDIOC_STREAMON, &type))
         mesg_exit("VIDIOC_STREAMON");
     
-    while(true) {
-        read_frame(camfd);
-    }
+    // while(true) {
+    //     read_frame(camfd);
+    // }
 
     /////////////////////
     // mainloop - polling wait
-    // while(true) {
-    //     while(true) {
-    //         fd_set fds;
-    //         struct timeval tv;
-    //         FD_ZERO(&fds);
-    //         FD_SET(camfd, &fds);
+    while(true) {
+        while(true) {
+            fd_set fds;
+            struct timeval tv;
+            FD_ZERO(&fds);
+            FD_SET(camfd, &fds);
 
-    //         tv.tv_sec = 2;
-    //         tv.tv_usec = 0;
+            tv.tv_sec = 2;
+            tv.tv_usec = 0;
 
-    //         int r = select(camfd + 1, &fds, NULL, NULL, &tv);
-    //         if(r == -1) {
-	// 			if(EINTR == errno) 
-    //                 continue;
-	// 			mesg_exit("select");
-	// 		}
-    //         else if(r == 0) {
-	// 			fprintf(stderr, "select timeout\n");
-	// 			exit(EXIT_FAILURE);
-	// 		}
+            int r = select(camfd + 1, &fds, NULL, NULL, &tv);
+            if(r == -1) {
+				if(EINTR == errno) 
+                    continue;
+				mesg_exit("select");
+			}
+            else if(r == 0) {
+				fprintf(stderr, "select timeout\n");
+				exit(EXIT_FAILURE);
+			}
 
-    //         // polling으로 읽을 프레임이 있을 때만 읽음
-    //         if (read_frame(camfd))
-    //             break;
-    //     }
-    // }
+            // polling으로 읽을 프레임이 있을 때만 읽음
+            if (read_frame(camfd))
+                break;
+        }
+    }
 
     return 0;
 }
@@ -306,7 +256,7 @@ static int read_frame(int fd) {
     std::cout << "buf.length: " << buf.length << ", buf.bytesused: " << buf.bytesused << "\n";
 
     // index로 프레임 접근
-    send_image(&(buffers[buf.index]));
+    process_image(&(buffers[buf.index]));
 
     // 다시 VIDIOC_QBUF로 프레임 요청
     if (xioctl(fd, VIDIOC_QBUF, &buf))
@@ -317,33 +267,32 @@ static int read_frame(int fd) {
     return 1;
 }
 
-static void send_image(const void* p) {
-    struct buffer* inbuff = (struct buffer*) p;
+static void process_image(const void* p) {
+    // something ...
+    // yuyv -> h.264 코덱 -> libavformat으로 변환 후 저장
 
-	//size_t chunk = BUFSIZ;
-	int remain = inbuff->length;
-	int total_sent = 0;
-	int sent = 0;
+}
 
-	unsigned char* data = (unsigned char *)(inbuff->start);
+int initFramebuffer(ushort** fbPtr, int* size) {
+    int fd = open(FB_DEV, O_RDWR);
+    if (fd < 0) {
+        perror("Failed to open framebuffer device");
+        return -1;
+    }
 
-    std::cout << "buf->length : " << inbuff->length << ", sizeof(buf->start): " << sizeof(&(inbuff->start)) << "\n";
+    if (ioctl(fd, FBIOGET_VSCREENINFO, &vinfo)) {
+        perror("Error reading variable information");
+        close(fd);
+        return -1;
+    }
 
-	while (remain > 0) {
-		int to_send = inbuff->length - sent;
+    *size = vinfo.yres_virtual * vinfo.xres_virtual * vinfo.bits_per_pixel / 8;
+    *fbPtr = (ushort*)mmap(0, *size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (*fbPtr == MAP_FAILED) {
+        perror("Failed to mmap framebuffer");
+        close(fd);
+        return -1;
+    }
 
-		//std::cout << "left : " << remain << "\n";
-
-		if ((sent = write(csock, data + total_sent, to_send)) <= 0) {
-			perror("Error : write()");
-			break;
-		}
-
-        std::cout << "sent: " << sent << ", sizeof(sent): " << sizeof(sent) << "\n";
-
-		total_sent += sent;
-		remain -= sent;
-	}
-
-    std::cout << "send_image done!" << "\n";
+    return fd;
 }

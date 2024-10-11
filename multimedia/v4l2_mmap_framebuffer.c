@@ -182,7 +182,7 @@ static void init_mmap(int fd) {
 
 	if(-1 == xioctl(fd, VIDIOC_REQBUFS, &req)) {
 		if(EINVAL == errno) {
-			fprintf(stderr, "%s does not support memory mapping\n", VIDEODEV);
+			fprintf(stderr, "%s does not support memory mapping\n", VIDEO_DEV);
 			exit(EXIT_FAILURE);
 		} else {
 			mesg_exit("VIDIOC_REQBUFS");
@@ -190,7 +190,7 @@ static void init_mmap(int fd) {
 	}
 
 	if(req.count < 2) {
-		fprintf(stderr, "Insufficient buffer memory on %s\n", VIDEODEV);
+		fprintf(stderr, "Insufficient buffer memory on %s\n", VIDEO_DEV);
 		exit(EXIT_FAILURE);
 	}
 
@@ -226,7 +226,7 @@ static void init_device(int fd) {
 
 	if(-1 == xioctl(fd, VIDIOC_QUERYCAP, &cap)) {
 		if(EINVAL == errno) {
-			fprintf(stderr, "%s is no V4L2 device\n", VIDEODEV);
+			fprintf(stderr, "%s is no V4L2 device\n", VIDEO_DEV);
 			exit(EXIT_FAILURE);
 		} else {
 			mesg_exit("VIDIOC_QUERYCAP");
@@ -235,12 +235,12 @@ static void init_device(int fd) {
 
 	if(!(cap.capabilities & V4L2_CAP_VIDEO_CAPTURE)) {
 		fprintf(stderr, "%s is no video capture device\n",
-		                         VIDEODEV);
+		                         VIDEO_DEV);
 		exit(EXIT_FAILURE);
 	}
 
 	if(!(cap.capabilities & V4L2_CAP_STREAMING)) {
-		fprintf(stderr, "%s does not support streaming i/o\n", VIDEODEV);
+		fprintf(stderr, "%s does not support streaming i/o\n", VIDEO_DEV);
 		exit(EXIT_FAILURE);
 	}
 
@@ -313,10 +313,10 @@ int main(int argc, char **argv) {
 	memset(fbp, 0, screensize);
 
 	/* 카메라 장치 열기 */
-	camfd = open(VIDEODEV, O_RDWR | O_NONBLOCK, 0);
+	camfd = open(VIDEO_DEV, O_RDWR | O_NONBLOCK, 0);
 	if(-1 == camfd) {
 		fprintf(stderr, "Cannot open '%s': %d, %s\n",
-		                         VIDEODEV, errno, strerror(errno));
+		                         VIDEO_DEV, errno, strerror(errno));
 		return EXIT_FAILURE;
 	}
 

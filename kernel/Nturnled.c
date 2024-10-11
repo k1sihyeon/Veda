@@ -7,6 +7,8 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+// 64-bit
+
 typedef struct {
     uint32_t status;
     uint32_t ctrl;
@@ -14,8 +16,7 @@ typedef struct {
 
 #define GPIO ((GPIOregs *)GPIOBase)
 
-typedef struct
-{
+typedef struct {
     uint32_t Out;
     uint32_t OE;
     uint32_t In;
@@ -45,8 +46,9 @@ int main(int argc, char **argv) {
     
     close(memfd);
     
-    uint32_t *PERIBase = map;
+    uint32_t *PERIBase = map;       //0x1f00000000
     uint32_t *GPIOBase = PERIBase + 0xD0000 / 4;
+    
     uint32_t *RIOBase = PERIBase + 0xe0000 / 4;
     uint32_t *PADBase = PERIBase + 0xf0000 / 4;
     uint32_t *pad = PADBase + 1;
