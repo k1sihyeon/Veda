@@ -40,10 +40,12 @@ static int read_frame(int fd);
 static void process_image(const void* p);
 
 void yuyv2rgb565(uchar* yuyv, ushort* rgb, int width, int height);
-int initFramebuffer(ushort** fbPtr, int* size);
+//int initFramebuffer(ushort** fbPtr, int* size);
 static int init_v4l2(int* fd, struct buffer* buffers);
 
 int main(int argc, char** argv) {
+
+    signal(SIGINT, sigHandler);
 
     int camfd = -1;
 
@@ -52,7 +54,7 @@ int main(int argc, char** argv) {
 	// 카메라 장치 열기
     camfd = open(VIDEO_DEV, O_RDWR | O_NONBLOCK, 0);
 
-    if (-1 == camfd) {
+    if (camfd == -1) {
         fprintf(stderr, "Cannot open '%s': %d, %s\n", VIDEO_DEV, errno, strerror(errno));
         return EXIT_FAILURE;
     }
@@ -273,26 +275,26 @@ static void process_image(const void* p) {
 
 }
 
-int initFramebuffer(ushort** fbPtr, int* size) {
-    int fd = open(FB_DEV, O_RDWR);
-    if (fd < 0) {
-        perror("Failed to open framebuffer device");
-        return -1;
-    }
+// int initFramebuffer(ushort** fbPtr, int* size) {
+//     int fd = open(FB_DEV, O_RDWR);
+//     if (fd < 0) {
+//         perror("Failed to open framebuffer device");
+//         return -1;
+//     }
 
-    if (ioctl(fd, FBIOGET_VSCREENINFO, &vinfo)) {
-        perror("Error reading variable information");
-        close(fd);
-        return -1;
-    }
+//     if (ioctl(fd, FBIOGET_VSCREENINFO, &vinfo)) {
+//         perror("Error reading variable information");
+//         close(fd);
+//         return -1;
+//     }
 
-    *size = vinfo.yres_virtual * vinfo.xres_virtual * vinfo.bits_per_pixel / 8;
-    *fbPtr = (ushort*)mmap(0, *size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    if (*fbPtr == MAP_FAILED) {
-        perror("Failed to mmap framebuffer");
-        close(fd);
-        return -1;
-    }
+//     *size = vinfo.yres_virtual * vinfo.xres_virtual * vinfo.bits_per_pixel / 8;
+//     *fbPtr = (ushort*)mmap(0, *size, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+//     if (*fbPtr == MAP_FAILED) {
+//         perror("Failed to mmap framebuffer");
+//         close(fd);
+//         return -1;
+//     }
 
-    return fd;
-}
+//     return fd;
+// }

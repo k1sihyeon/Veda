@@ -5,6 +5,8 @@
 #include <linux/uaccess.h>
 #include <linux/gpio.h>
 #include <linux/interrupt.h>
+#include <linux/timer.h>
+#include <linux/mutex.h>
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("SiHyeonKim");
@@ -35,15 +37,32 @@ static struct file_operations gpio_fops = {
 static char msg[BLOCK_SIZE] = {0};
 struct cdev gpio_cdev;
 static int switch_irq;
+static struct timer_list timer;
+static DEFINE_MUTEX(led_mutex);     // 커널 뮤텍스
+
+static void timer_func(struct timer_list *t) {
+    if (mutex_trylock(&led_mutex) != 0) {
+        static int ledflag = 1;
+        gpio_set_value(GPIO_LED, ledflag);
+        ledflag = !ledflag;
+        mutex_unlock(&led_mutex);
+    }
+
+    mod_timer(&timer, jiffies + (1*HZ));
+}
 
 static irqreturn_t isr_func(int irq, void* data) {
-    if ((irq == switch_irq) && !gpio_get_value(GPIO_LED)) {
-        gpio_set_value(GPIO_LED, 1);
-        printk("switch led on!\n");
-    }
-    else if ((irq == switch_irq) && gpio_get_value(GPIO_LED)) {
-        gpio_set_value(GPIO_LED, 0);
-        printk("switch led off!\n");
+    if (mutex_trylock(&led_mutex) != 0) {
+        if ((irq == switch_irq) && !gpio_get_value(GPIO_LED)) {
+            gpio_set_value(GPIO_LED, 1);
+            printk("switch led on!\n");
+        }
+        else if ((irq == switch_irq) && gpio_get_value(GPIO_LED)) {
+            gpio_set_value(GPIO_LED, 0);
+            printk("switch led off!\n");
+        }
+
+        mutex_unlock(&led_mutex);
     }
 
     return IRQ_HANDLED;
@@ -55,6 +74,8 @@ int init_module(void) {
     int err;
 
     printk(KERN_INFO "Hello module!\n");
+
+    mutex_init(&led_mutex);
 
     try_module_get(THIS_MODULE);
 
@@ -87,6 +108,9 @@ int init_module(void) {
 
 void cleanup_module(void) {
     dev_t devno = MKDEV(GPIO_MAJOR, GPIO_MINOR);
+
+    mutex_destroy(&led_mutex);
+
     unregister_chrdev_region(devno, 1);
 
     cdev_del(&gpio_cdev);
@@ -131,7 +155,18 @@ static ssize_t gpio_write(struct file *inode, const char *buff, size_t len, loff
     memset(msg, 0, BLOCK_SIZE);
     count = copy_from_user(msg, buff, len);
 
-    gpio_set_value(GPIO_LED, (!strcmp(msg, "0")) ? 0 : 1);
+    if (!strcmp(msg, "0")) {
+        del_timer_sync(&timer);
+        gpio_set_value(GPIO_LED, 0);
+    }
+    else {
+        timer_setup(&timer, timer_func, 0);
+
+        timer.expires = jiffies + (1*HZ);
+        add_timer(&timer);
+    }
+
+    //gpio_set_value(GPIO_LED, (!strcmp(msg, "0")) ? 0 : 1);
 
     printk("GPIO Device(%d) write : %s(%ld)\n", MAJOR(inode->f_path.dentry->d_inode->i_rdev), msg, len);
 

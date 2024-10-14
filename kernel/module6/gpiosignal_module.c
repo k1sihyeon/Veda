@@ -5,6 +5,11 @@
 #include <linux/uaccess.h>
 #include <linux/gpio.h>
 #include <linux/interrupt.h>
+#include <linux/timer.h>
+#include <linux/mutex.h>
+#include <linux/string.h>
+#include <linux/sched.h>
+#include <linux/sched/signal.h>
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("SiHyeonKim");
@@ -35,15 +40,39 @@ static struct file_operations gpio_fops = {
 static char msg[BLOCK_SIZE] = {0};
 struct cdev gpio_cdev;
 static int switch_irq;
+static struct timer_list timer;
+static struct task_struct* task;
+static DEFINE_MUTEX(led_mutex);     // 커널 뮤텍스
+
+static void timer_func(struct timer_list *t) {
+    if (mutex_trylock(&led_mutex) != 0) {
+        static int ledflag = 1;
+        gpio_set_value(GPIO_LED, ledflag);
+        ledflag = !ledflag;
+        mutex_unlock(&led_mutex);
+    }
+
+    mod_timer(&timer, jiffies + (1*HZ));
+}
 
 static irqreturn_t isr_func(int irq, void* data) {
-    if ((irq == switch_irq) && !gpio_get_value(GPIO_LED)) {
-        gpio_set_value(GPIO_LED, 1);
-        printk("switch led on!\n");
-    }
-    else if ((irq == switch_irq) && gpio_get_value(GPIO_LED)) {
-        gpio_set_value(GPIO_LED, 0);
-        printk("switch led off!\n");
+    if (mutex_trylock(&led_mutex) != 0) {
+        if ((irq == switch_irq) && !gpio_get_value(GPIO_LED)) {
+            gpio_set_value(GPIO_LED, 1);
+            printk("switch led on!\n");
+        }
+        else if ((irq == switch_irq) && gpio_get_value(GPIO_LED)) {
+            static struct kernel_siginfo sinfo;
+            memset(&sinfo, 0, sizeof(struct kernel_siginfo));
+            sinfo.si_signo = SIGIO;
+            sinfo.si_code = SI_USER;
+            send_sig_info(SIGIO, &sinfo, task);
+            
+            gpio_set_value(GPIO_LED, 0);
+            printk("switch led off!\n");
+        }
+
+        mutex_unlock(&led_mutex);
     }
 
     return IRQ_HANDLED;
@@ -55,6 +84,8 @@ int init_module(void) {
     int err;
 
     printk(KERN_INFO "Hello module!\n");
+
+    mutex_init(&led_mutex);
 
     try_module_get(THIS_MODULE);
 
@@ -87,6 +118,9 @@ int init_module(void) {
 
 void cleanup_module(void) {
     dev_t devno = MKDEV(GPIO_MAJOR, GPIO_MINOR);
+
+    mutex_destroy(&led_mutex);
+
     unregister_chrdev_region(devno, 1);
 
     cdev_del(&gpio_cdev);
@@ -128,12 +162,45 @@ static ssize_t gpio_read(struct file *inode, char *buff, size_t len, loff_t *off
 
 static ssize_t gpio_write(struct file *inode, const char *buff, size_t len, loff_t *off) {
     short count;
+    char *cmd, *str;
+    char *sep = ":";
+    char *endptr, *pidstr;
+    pid_t pid;
+
     memset(msg, 0, BLOCK_SIZE);
     count = copy_from_user(msg, buff, len);
 
-    gpio_set_value(GPIO_LED, (!strcmp(msg, "0")) ? 0 : 1);
+    // write 함수로 부터 메시지를 분석하여 명령과 pid로 분리
+    str = kstrdup(msg, GFP_KERNEL);
+    cmd = strsep(&str, sep);
+    pidstr = strsep(&str, sep);
+    printk("Command : %s, Pid : %s\n", cmd, pidstr);
+    cmd[1] = '\0';
+
+    if (!strcmp(cmd, "0")) {
+        del_timer_sync(&timer);
+        gpio_set_value(GPIO_LED, 0);
+    }
+    else {
+        timer_setup(&timer, timer_func, 0);
+
+        timer.expires = jiffies + (1*HZ);
+        add_timer(&timer);
+    }
+
+    //gpio_set_value(GPIO_LED, (!strcmp(msg, "0")) ? 0 : 1);
 
     printk("GPIO Device(%d) write : %s(%ld)\n", MAJOR(inode->f_path.dentry->d_inode->i_rdev), msg, len);
+
+    // 시그널 발생시 보낼 pid를 등록
+    pid = simple_strtol(pidstr, &endptr, 10);
+    if (endptr != NULL) {
+        task = pid_task(find_vpid(pid), PIDTYPE_PID);
+        if (task == NULL) {
+            printk("Error : Can't find PID from user application\n");
+            return 0;
+        }
+    }
 
     return count;
 }

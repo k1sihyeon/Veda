@@ -36,14 +36,22 @@ MODULE_INFO(retpoline, "Y");
 static const struct modversion_info ____versions[]
 __used __section("__versions") = {
 	{ 0x122c3a7e, "_printk" },
-	{ 0xdcb764ad, "memset" },
+	{ 0xbb9ed3bf, "mutex_trylock" },
+	{ 0x15ba50a6, "jiffies" },
+	{ 0xc38c83b8, "mod_timer" },
 	{ 0x69907a56, "gpio_to_desc" },
 	{ 0x695ce26c, "gpiod_set_raw_value" },
+	{ 0x3213f038, "mutex_unlock" },
+	{ 0xdcb764ad, "memset" },
+	{ 0xc6f46339, "init_timer_key" },
+	{ 0x24d273d1, "add_timer" },
 	{ 0x12a4e128, "__arch_copy_from_user" },
+	{ 0x82ee90dc, "timer_delete_sync" },
 	{ 0x7682ba4e, "__copy_overflow" },
 	{ 0x790eb612, "gpiod_get_raw_value" },
 	{ 0x98cf60b3, "strlen" },
 	{ 0x6cbbfc54, "__arch_copy_to_user" },
+	{ 0xcefb0c9f, "__mutex_init" },
 	{ 0x7dea1285, "try_module_get" },
 	{ 0x3fd78f3b, "register_chrdev_region" },
 	{ 0xe78e8907, "cdev_init" },
@@ -64,4 +72,4 @@ __used __section("__versions") = {
 MODULE_INFO(depends, "");
 
 
-MODULE_INFO(srcversion, "CA2C938BE11411C1BC7D617");
+MODULE_INFO(srcversion, "72791F3CC702C5402C8F253");
