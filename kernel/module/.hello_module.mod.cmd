@@ -1,1 +1,0 @@
-savedcmd_/home/sihyeon/workspace/veda/kernel/module/hello_module.mod := printf '%s\n'   hello_module.o | awk '!x[$$0]++ { print("/home/sihyeon/workspace/veda/kernel/module/"$$0) }' > /home/sihyeon/workspace/veda/kernel/module/hello_module.mod

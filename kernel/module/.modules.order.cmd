@@ -1,1 +1,0 @@
-savedcmd_/home/sihyeon/workspace/veda/kernel/module/modules.order := {   echo /home/sihyeon/workspace/veda/kernel/module/hello_module.o; :; } > /home/sihyeon/workspace/veda/kernel/module/modules.order

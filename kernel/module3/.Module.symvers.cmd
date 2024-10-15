@@ -1,1 +1,0 @@
-savedcmd_/home/sihyeon/workspace/veda/kernel/module3/Module.symvers :=  scripts/mod/modpost -M -m -a      -o /home/sihyeon/workspace/veda/kernel/module3/Module.symvers -T /home/sihyeon/workspace/veda/kernel/module3/modules.order -i Module.symvers -e 

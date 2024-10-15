@@ -1,1 +1,0 @@
-savedcmd_/home/sihyeon/workspace/veda/kernel/module2/gpio_module.mod := printf '%s\n'   gpio_module.o | awk '!x[$$0]++ { print("/home/sihyeon/workspace/veda/kernel/module2/"$$0) }' > /home/sihyeon/workspace/veda/kernel/module2/gpio_module.mod

@@ -1,1 +1,0 @@
-savedcmd_/home/sihyeon/workspace/veda/kernel/module4/gpioirq_module.mod := printf '%s\n'   gpioirq_module.o | awk '!x[$$0]++ { print("/home/sihyeon/workspace/veda/kernel/module4/"$$0) }' > /home/sihyeon/workspace/veda/kernel/module4/gpioirq_module.mod
