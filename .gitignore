@@ -8,3 +8,4 @@
 /chat/data
 /tmp
 */build
+*.cmd
